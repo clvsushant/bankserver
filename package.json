@@ -1,0 +1,39 @@
+{
+  "name": "bankserver",
+  "version": "1.0.0",
+  "description": "Sample DDD banking backend layered on top of the encryption core.",
+  "license": "ISC",
+  "type": "commonjs",
+  "main": "src/main.js",
+  "scripts": {
+    "test": "TS_NODE_TRANSPILE_ONLY=true node --require ts-node/register --test src/__tests__/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "dev": "ts-node src/main.ts",
+    "build": "tsc && mkdir -p dist/api-docs && cp -R src/api-docs/. dist/api-docs/",
+    "start": "node dist/main.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "ts-node src/db/migrate.ts",
+    "db:seed": "ts-node src/db/seed.ts",
+    "db:seed:test-customers": "ts-node src/db/seedTestCustomers.ts",
+    "db:reset": "rm -f bankserver.sqlite && npm run db:migrate && npm run db:seed",
+    "format": "prettier --write \"src/**/*.{ts,js}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js}\""
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^11.3.0",
+    "drizzle-orm": "^0.36.0",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.7.0",
+    "drizzle-kit": "^0.28.0",
+    "prettier": "^3.8.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}

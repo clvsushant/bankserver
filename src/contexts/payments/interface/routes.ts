@@ -1,0 +1,283 @@
+import express from "express";
+import { container } from "../../../container";
+import { isNonEmptyString, isUuid } from "../../../utils/validate";
+import {
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    HttpError,
+    NotFoundError,
+} from "../../../utils/errors";
+import { requireStepUp } from "../../../middleware/step-up";
+import { auditMiddleware } from "../../audit/interface/middleware";
+import { AuditActions } from "../../audit/domain/actions";
+import { executeTransfer } from "../application/executeTransfer";
+import { faucetDeposit } from "../application/faucetDeposit";
+import { touchBeneficiaryByAccount } from "../../beneficiaries/application/manageBeneficiary";
+import {
+    AccountNotActiveError,
+    AccountNotFoundError,
+    CurrencyMismatchError,
+    InsufficientFundsError,
+} from "../../accounts/domain/errors";
+import {
+    CrossUserFixedDepositTransferError,
+    TransferAmountInvalidError,
+    TransferOverLimitError,
+    TransferToSelfError,
+} from "../domain/errors";
+
+export const transferCustomerRouter = express.Router();
+export const transactionsAdminRouter = express.Router();
+export const faucetAdminRouter = express.Router();
+
+// POST /transfer is the only step-up-gated endpoint in this router. The
+// read-only listing below stays available to any authenticated user.
+transferCustomerRouter.post(
+    "/",
+    requireStepUp("transfer"),
+    auditMiddleware(AuditActions.TransferExecuted, {
+        target: (req) => {
+            const id = (req.body as { fromAccountId?: string })?.fromAccountId;
+            return id ? { type: "account", id } : null;
+        },
+    }),
+    (req, res, next) => {
+    try {
+        const user = req.user!;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const fromAccountId = body.fromAccountId;
+        let toAccountNumber = body.toAccountNumber as unknown;
+        const beneficiaryId = body.beneficiaryId as unknown;
+        const amountMinor = body.amountMinor;
+        const memo = body.memo;
+        const idempotencyKey = body.idempotencyKey;
+
+        if (!isUuid(fromAccountId))
+            return next(new BadRequestError("Invalid fromAccountId"));
+
+        // beneficiaryId is an alternate addressing mode — resolve it to the
+        // saved account number. Validates ownership before letting it stand
+        // in for `toAccountNumber`.
+        if (typeof beneficiaryId === "string" && beneficiaryId.length > 0) {
+            if (!isUuid(beneficiaryId))
+                return next(new BadRequestError("Invalid beneficiaryId"));
+            const b = container.repos.beneficiaries.findById(beneficiaryId);
+            if (!b || b.ownerUserId !== user.id)
+                return next(new NotFoundError("Beneficiary not found"));
+            toAccountNumber = b.accountNumber;
+        }
+
+        if (!isNonEmptyString(toAccountNumber, 32))
+            return next(new BadRequestError("Invalid toAccountNumber"));
+        if (typeof amountMinor !== "number" || !Number.isInteger(amountMinor) || amountMinor <= 0)
+            return next(new BadRequestError("Invalid amountMinor"));
+        if (memo !== undefined && memo !== null && (typeof memo !== "string" || memo.length > 256))
+            return next(new BadRequestError("Invalid memo"));
+        if (idempotencyKey !== undefined && !isNonEmptyString(idempotencyKey, 128))
+            return next(new BadRequestError("Invalid idempotencyKey"));
+
+        // Authorization: the source account must belong to the caller.
+        const from = container.repos.accounts.findById(fromAccountId);
+        if (!from) return next(new NotFoundError("Source account not found"));
+        if (from.userId !== user.id)
+            return next(new ForbiddenError("Source account does not belong to user"));
+
+        const transfer = executeTransfer(
+            {
+                db: container.db,
+                clock: container.clock,
+                ids: container.ids,
+                bus: container.bus,
+            },
+            {
+                fromAccountId,
+                toAccountNumber: toAccountNumber as string,
+                amountMinor,
+                currency: "INR",
+                memo: typeof memo === "string" ? memo : undefined,
+                idempotencyKey: idempotencyKey as string | undefined,
+            }
+        );
+
+        // Post-success: stamp last_used_at on the saved beneficiary (if any).
+        try {
+            touchBeneficiaryByAccount(
+                {
+                    repo: container.repos.beneficiaries,
+                    clock: container.clock,
+                },
+                { ownerUserId: user.id, accountNumber: toAccountNumber as string }
+            );
+        } catch {
+            // Best-effort; never fail the response on this.
+        }
+
+        res.json({ transfer: serialize(transfer) });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
+transferCustomerRouter.get("/recent", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const accountId = req.query.accountId;
+        if (!isUuid(accountId)) return next(new BadRequestError("Invalid accountId"));
+        const acc = container.repos.accounts.findById(accountId);
+        if (!acc || acc.userId !== user.id) return next(new NotFoundError("Account not found"));
+        const entries = container.repos.ledger.listByAccountId(acc.id, 50);
+        res.json({ entries: entries.map(serializeLedger) });
+    } catch (err) {
+        next(err);
+    }
+});
+
+/** GET /transfer/mine — list of transfers touching any account owned by caller. */
+transferCustomerRouter.get("/mine", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const myAccounts = container.repos.accounts.listByUserId(user.id);
+        const myAccountIds = new Set(myAccounts.map((a) => a.id));
+        if (myAccountIds.size === 0) return res.json({ transfers: [] });
+        const all = container.repos.transfers.list(500);
+        const mine = all.filter(
+            (t) =>
+                (t.fromAccountId && myAccountIds.has(t.fromAccountId)) ||
+                (t.toAccountId && myAccountIds.has(t.toAccountId))
+        );
+        res.json({ transfers: mine.map(serialize) });
+    } catch (err) {
+        next(err);
+    }
+});
+
+/** GET /transfer/:id — full receipt with both ledger entries; ownership-checked. */
+transferCustomerRouter.get("/:id", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const id = req.params.id;
+        if (!isUuid(id)) return next(new BadRequestError("Invalid transfer id"));
+        const transfer = container.repos.transfers.findById(id);
+        if (!transfer) return next(new NotFoundError("Transfer not found"));
+
+        const owns =
+            user.role === "admin" ||
+            (transfer.fromAccountId &&
+                container.repos.accounts.findById(transfer.fromAccountId)?.userId === user.id) ||
+            (transfer.toAccountId &&
+                container.repos.accounts.findById(transfer.toAccountId)?.userId === user.id);
+        if (!owns) return next(new ForbiddenError("Not your transfer"));
+
+        const entries = container.repos.ledger.listByTransferId(transfer.id);
+        res.json({
+            transfer: serialize(transfer),
+            entries: entries.map(serializeLedger),
+        });
+    } catch (err) {
+        next(err);
+    }
+});
+
+transactionsAdminRouter.get(
+    "/",
+    auditMiddleware(AuditActions.AdminTransactionsListed),
+    (_req, res, next) => {
+        try {
+            const ts = container.repos.transfers.list(200);
+            res.json({ transfers: ts.map(serialize) });
+        } catch (err) {
+            next(err);
+        }
+    }
+);
+
+faucetAdminRouter.post(
+    "/",
+    auditMiddleware(AuditActions.AdminFaucetIssued),
+    (req, res, next) => {
+    try {
+        const body = (req.body || {}) as Record<string, unknown>;
+        const toAccountId = body.toAccountId;
+        const amountMinor = body.amountMinor;
+        const memo = body.memo;
+        const idempotencyKey = body.idempotencyKey;
+        if (!isUuid(toAccountId)) return next(new BadRequestError("Invalid toAccountId"));
+        if (typeof amountMinor !== "number" || !Number.isInteger(amountMinor) || amountMinor <= 0)
+            return next(new BadRequestError("Invalid amountMinor"));
+        if (memo !== undefined && (typeof memo !== "string" || memo.length > 256))
+            return next(new BadRequestError("Invalid memo"));
+        if (idempotencyKey !== undefined && !isNonEmptyString(idempotencyKey, 128))
+            return next(new BadRequestError("Invalid idempotencyKey"));
+
+        const transfer = faucetDeposit(
+            {
+                db: container.db,
+                clock: container.clock,
+                ids: container.ids,
+                bus: container.bus,
+            },
+            {
+                toAccountId,
+                amountMinor,
+                currency: "INR",
+                memo: memo as string | undefined,
+                idempotencyKey: idempotencyKey as string | undefined,
+            }
+        );
+        res.json({ transfer: serialize(transfer) });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
+function serialize(t: ReturnType<typeof container.repos.transfers.findById>) {
+    if (!t) return null;
+    return {
+        id: t.id,
+        idempotencyKey: t.idempotencyKey,
+        fromAccountId: t.fromAccountId,
+        toAccountId: t.toAccountId,
+        amountMinor: t.amountMinor,
+        currency: t.currency,
+        memo: t.memo,
+        kind: t.kind,
+        status: t.status,
+        postedAt: t.postedAt.toISOString(),
+        referenceNumber: t.referenceNumber,
+        feeMinor: t.feeMinor,
+        category: t.category,
+        fromAccountNumber: t.fromAccountNumber,
+        toAccountNumber: t.toAccountNumber,
+        fromUsername: t.fromUsername,
+        toUsername: t.toUsername,
+        description: t.description,
+        billerId: t.billerId,
+    };
+}
+
+function serializeLedger(e: ReturnType<typeof container.repos.ledger.listByAccountId>[number]) {
+    return {
+        id: e.id,
+        accountId: e.accountId,
+        transferId: e.transferId,
+        kind: e.kind,
+        amountMinor: e.amountMinor,
+        runningBalanceMinor: e.runningBalanceMinor,
+        postedAt: e.postedAt.toISOString(),
+    };
+}
+
+function translate(err: unknown): unknown {
+    if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
+    if (err instanceof TransferOverLimitError) return new BadRequestError(err.message);
+    if (err instanceof TransferToSelfError) return new BadRequestError(err.message);
+    if (err instanceof CrossUserFixedDepositTransferError)
+        return new ConflictError(err.message);
+    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
+    if (err instanceof AccountNotActiveError) return new ConflictError(err.message);
+    if (err instanceof CurrencyMismatchError) return new BadRequestError(err.message);
+    if (err instanceof InsufficientFundsError) return new ConflictError(err.message);
+    if (err instanceof HttpError) return err;
+    return err;
+}
