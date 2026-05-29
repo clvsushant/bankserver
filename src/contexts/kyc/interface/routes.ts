@@ -11,12 +11,7 @@ import { auditMiddleware } from "../../audit/interface/middleware";
 import { AuditActions } from "../../audit/domain/actions";
 import { submitKyc } from "../application/submitKyc";
 import { approveKyc, rejectKyc } from "../application/decideKyc";
-import {
-    KycAlreadyExistsError,
-    KycInvalidPanError,
-    KycInvalidTransitionError,
-    KycNotFoundError,
-} from "../domain/errors";
+import { composeDomainErrorTranslation, translateKycDomainError } from "../../../shared/domainErrorTranslate";
 import { isAccountType, type AccountType } from "../../accounts/domain/account";
 
 /**
@@ -164,10 +159,5 @@ function serialize(app: ReturnType<typeof container.repos.kyc.findById>) {
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof KycAlreadyExistsError) return new ConflictError(err.message);
-    if (err instanceof KycInvalidPanError) return new BadRequestError(err.message);
-    if (err instanceof KycInvalidTransitionError) return new ConflictError(err.message);
-    if (err instanceof KycNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateKycDomainError);
 }

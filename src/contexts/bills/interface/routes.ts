@@ -12,17 +12,7 @@ import { requireStepUp } from "../../../middleware/step-up";
 import { auditMiddleware } from "../../audit/interface/middleware";
 import { AuditActions } from "../../audit/domain/actions";
 import { payBill } from "../application/payBill";
-import { BillerInactiveError, BillerNotFoundError } from "../domain/errors";
-import {
-    AccountNotActiveError,
-    AccountNotFoundError,
-    CurrencyMismatchError,
-    InsufficientFundsError,
-} from "../../accounts/domain/errors";
-import {
-    TransferAmountInvalidError,
-    TransferOverLimitError,
-} from "../../payments/domain/errors";
+import { composeDomainErrorTranslation, translateBillDomainError } from "../../../shared/domainErrorTranslate";
 
 export const billsRouter = express.Router();
 
@@ -111,14 +101,5 @@ billsRouter.post(
 });
 
 function translate(err: unknown): unknown {
-    if (err instanceof BillerNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof BillerInactiveError) return new ConflictError(err.message);
-    if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
-    if (err instanceof TransferOverLimitError) return new BadRequestError(err.message);
-    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof AccountNotActiveError) return new ConflictError(err.message);
-    if (err instanceof CurrencyMismatchError) return new BadRequestError(err.message);
-    if (err instanceof InsufficientFundsError) return new ConflictError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateBillDomainError);
 }

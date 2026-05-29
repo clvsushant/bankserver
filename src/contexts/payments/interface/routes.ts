@@ -24,26 +24,10 @@ import {
     markPendingExecuted,
     requiresMakerChecker,
 } from "../../../services/adminMakerChecker";
-import { isTransferAllowed } from "../../beneficiaries/domain/beneficiary";
 import { BeneficiaryCoolingPeriodError } from "../../beneficiaries/domain/errors";
+import { isTransferAllowed } from "../../beneficiaries/domain/beneficiary";
 import { touchBeneficiaryByAccount } from "../../beneficiaries/application/manageBeneficiary";
-import {
-    AccountNotActiveError,
-    AccountNotFoundError,
-    CurrencyMismatchError,
-    InsufficientFundsError,
-} from "../../accounts/domain/errors";
-import {
-    CrossUserFixedDepositTransferError,
-    TransferAggregateLimitError,
-    TransferAmountInvalidError,
-    TransferOverLimitError,
-    TransferToSelfError,
-} from "../domain/errors";
-import {
-    InsufficientAvailableFundsError,
-    MinimumBalanceViolationError,
-} from "../../accounts/domain/errors";
+import { composeDomainErrorTranslation, translateDisputePlainError } from "../../../shared/domainErrorTranslate";
 
 export const transferCustomerRouter = express.Router();
 export const transactionsAdminRouter = express.Router();
@@ -85,7 +69,7 @@ transferCustomerRouter.post(
             if (!b || b.ownerUserId !== user.id)
                 return next(new NotFoundError("Beneficiary not found"));
             if (!isTransferAllowed(b, container.clock.now()))
-                return next(new BeneficiaryCoolingPeriodError());
+                return next(translate(new BeneficiaryCoolingPeriodError()));
             toAccountNumber = b.accountNumber;
             resolvedBeneficiaryId = b.id;
         }
@@ -239,7 +223,7 @@ transferCustomerRouter.post("/disputes", auditMiddleware(AuditActions.DisputeFil
         );
         res.status(201).json({ dispute: serializeDispute(d) });
     } catch (err) {
-        next(err instanceof Error ? new BadRequestError(err.message) : err);
+        next(translate(err));
     }
 });
 
@@ -417,7 +401,7 @@ transactionsAdminRouter.post("/disputes/:id/decide", (req, res, next) => {
         );
         res.json({ dispute: serializeDispute(d) });
     } catch (err) {
-        next(err instanceof Error ? new BadRequestError(err.message) : err);
+        next(translate(err));
     }
 });
 
@@ -526,19 +510,5 @@ function serializeDispute(d: ReturnType<typeof container.repos.disputes.findById
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
-    if (err instanceof TransferOverLimitError) return new BadRequestError(err.message);
-    if (err instanceof TransferAggregateLimitError) return new ConflictError(err.message);
-    if (err instanceof TransferToSelfError) return new BadRequestError(err.message);
-    if (err instanceof CrossUserFixedDepositTransferError)
-        return new ConflictError(err.message);
-    if (err instanceof BeneficiaryCoolingPeriodError) return new ConflictError(err.message);
-    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof AccountNotActiveError) return new ConflictError(err.message);
-    if (err instanceof CurrencyMismatchError) return new BadRequestError(err.message);
-    if (err instanceof InsufficientFundsError) return new ConflictError(err.message);
-    if (err instanceof InsufficientAvailableFundsError) return new ConflictError(err.message);
-    if (err instanceof MinimumBalanceViolationError) return new ConflictError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateDisputePlainError);
 }

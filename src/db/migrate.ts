@@ -234,7 +234,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS transfers_idem_uq ON transfers (idempotency_ke
 CREATE INDEX IF NOT EXISTS transfers_by_from ON transfers (from_account_id);
 CREATE INDEX IF NOT EXISTS transfers_by_to ON transfers (to_account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS transfers_ref_uq ON transfers (reference_number);
-CREATE INDEX IF NOT EXISTS transfers_by_card ON transfers (card_id, posted_at);
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
     id TEXT PRIMARY KEY,

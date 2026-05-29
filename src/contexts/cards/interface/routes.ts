@@ -18,19 +18,10 @@ import {
     unfreezeCard,
 } from "../application/manageCards";
 import { simulateCardSpend } from "../application/simulateCardSpend";
-import {
-    CardInvalidStateError,
-    CardLimitAboveBankMaxError,
-    CardLimitExceededError,
-    CardMerchantNotConfiguredError,
-    CardNotFoundError,
-    CardPerTxnLimitError,
-} from "../domain/errors";
-import { AccountNotFoundError } from "../../accounts/domain/errors";
-import { TransferAmountInvalidError } from "../../payments/domain/errors";
 import { previewCardLimits } from "../../../services/cardLimits";
 import { getKycTier } from "../../identity/application/kycTier";
 import { bankMaxForTier } from "../../../services/cardLimits";
+import { composeDomainErrorTranslation, translateCardDomainError } from "../../../shared/domainErrorTranslate";
 
 export const cardsRouter = express.Router();
 
@@ -358,14 +349,5 @@ function serialize(c: ReturnType<typeof container.repos.cards.findById>) {
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof CardNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof CardInvalidStateError) return new ConflictError(err.message);
-    if (err instanceof CardLimitExceededError) return new ConflictError(err.message);
-    if (err instanceof CardPerTxnLimitError) return new ConflictError(err.message);
-    if (err instanceof CardLimitAboveBankMaxError) return new BadRequestError(err.message);
-    if (err instanceof CardMerchantNotConfiguredError) return new ConflictError(err.message);
-    if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
-    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateCardDomainError);
 }

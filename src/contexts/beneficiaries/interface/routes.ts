@@ -19,13 +19,7 @@ import {
     addExternalBeneficiary,
     listExternalBeneficiaries,
 } from "../application/externalBeneficiary";
-import {
-    BeneficiaryAlreadyExistsError,
-    BeneficiaryCoolingPeriodError,
-    BeneficiaryNotFoundError,
-    BeneficiarySelfTargetError,
-    BeneficiaryUnknownAccountError,
-} from "../domain/errors";
+import { composeDomainErrorTranslation, translateBeneficiaryDomainError } from "../../../shared/domainErrorTranslate";
 import { isTransferAllowed, isValidAccountNumber } from "../domain/beneficiary";
 import type { Beneficiary } from "../domain/beneficiary";
 
@@ -157,7 +151,7 @@ beneficiariesRouter.post("/external", requireStepUp("beneficiary.add"), (req, re
         );
         res.status(201).json({ externalBeneficiary: serializeExternal(b) });
     } catch (err) {
-        next(err instanceof Error ? new BadRequestError(err.message) : err);
+        next(translate(err));
     }
 });
 
@@ -225,11 +219,5 @@ function serializeExternal(
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof BeneficiaryAlreadyExistsError) return new ConflictError(err.message);
-    if (err instanceof BeneficiaryNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof BeneficiarySelfTargetError) return new BadRequestError(err.message);
-    if (err instanceof BeneficiaryUnknownAccountError) return new NotFoundError(err.message);
-    if (err instanceof BeneficiaryCoolingPeriodError) return new ConflictError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateBeneficiaryDomainError);
 }

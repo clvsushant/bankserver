@@ -13,11 +13,8 @@ import { prematureCloseFixedDeposit } from "../application/prematureCloseFixedDe
 import { closeAccount } from "../application/closeAccount";
 import { addNominee, listNominees, removeNominee } from "../application/nominee";
 import {
-    AccountNotFoundError,
-    AccountInvalidStatusTransitionError,
-    AccountCloseBlockedError,
-    AccountCloseRequiresZeroBalanceError,
-} from "../domain/errors";
+    composeDomainErrorTranslation,
+} from "../../../shared/domainErrorTranslate";
 import {
     ACCOUNT_TYPE_META,
     ACCOUNT_TYPES,
@@ -367,14 +364,7 @@ function serializeNominee(n: ReturnType<typeof container.repos.nominees.findById
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof AccountInvalidStatusTransitionError)
-        return new BadRequestError(err.message);
-    if (err instanceof AccountCloseRequiresZeroBalanceError)
-        return new ConflictError(err.message);
-    if (err instanceof AccountCloseBlockedError) return new ConflictError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err);
 }
 
 // Suppress unused-import warning when only the type narrowing call is used.

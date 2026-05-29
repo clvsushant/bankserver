@@ -18,11 +18,9 @@ import {
     resumeStandingInstruction,
 } from "../application/manageInstructions";
 import {
-    StandingInstructionInvalidStateError,
-    StandingInstructionNotFoundError,
-} from "../domain/errors";
-import { AccountNotFoundError } from "../../accounts/domain/errors";
-import { BeneficiaryNotFoundError } from "../../beneficiaries/domain/errors";
+    composeDomainErrorTranslation,
+    translateStandingInstructionDomainError,
+} from "../../../shared/domainErrorTranslate";
 
 export const standingInstructionsRouter = express.Router();
 
@@ -196,10 +194,5 @@ function serialize(si: ReturnType<typeof container.repos.standingInstructions.fi
 }
 
 function translate(err: unknown): unknown {
-    if (err instanceof StandingInstructionNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof StandingInstructionInvalidStateError) return new ConflictError(err.message);
-    if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof BeneficiaryNotFoundError) return new NotFoundError(err.message);
-    if (err instanceof HttpError) return err;
-    return err;
+    return composeDomainErrorTranslation(err, translateStandingInstructionDomainError);
 }
