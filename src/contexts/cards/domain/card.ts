@@ -12,6 +12,9 @@ export interface DebitCard {
     readonly issuedAt: Date;
     frozenAt?: Date;
     cancelledAt?: Date;
+    perTxnLimitMinor: number;
+    dailyLimitMinor: number;
+    monthlyLimitMinor: number;
 }
 
 const NETWORK_PREFIX: Record<CardNetwork, string> = {
@@ -36,6 +39,9 @@ export function createCard(input: {
     network: CardNetwork;
     issuedAt: Date;
     maskedNumber?: string;
+    perTxnLimitMinor: number;
+    dailyLimitMinor: number;
+    monthlyLimitMinor: number;
 }): DebitCard {
     return {
         id: input.id,
@@ -44,5 +50,8 @@ export function createCard(input: {
         network: input.network,
         status: "active",
         issuedAt: input.issuedAt,
+        perTxnLimitMinor: input.perTxnLimitMinor,
+        dailyLimitMinor: input.dailyLimitMinor,
+        monthlyLimitMinor: input.monthlyLimitMinor,
     };
 }

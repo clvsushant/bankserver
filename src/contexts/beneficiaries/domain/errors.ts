@@ -21,3 +21,9 @@ export class BeneficiaryUnknownAccountError extends Error {
         super("No account exists with that number");
     }
 }
+
+export class BeneficiaryCoolingPeriodError extends Error {
+    constructor() {
+        super("Beneficiary is in cooling period; transfers not allowed yet");
+    }
+}

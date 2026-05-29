@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { makeTestEnv } from "./_setup";
+import { makeTestEnv, grantBankingAccess } from "./_setup";
 import { findOrCreateUser } from "../contexts/identity/application/registerUser";
 import { createAccountForUser } from "../contexts/accounts/application/createAccount";
 import { faucetDeposit } from "../contexts/payments/application/faucetDeposit";
@@ -48,6 +48,7 @@ test("payBill credits the biller's internal account and debits the customer", ()
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
         { toAccountId: fromAcc.id, amountMinor: 100_000, currency: "INR" }
     );
+    grantBankingAccess(env, customer.id);
 
     const t = payBill(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
@@ -58,6 +59,7 @@ test("payBill credits the biller's internal account and debits the customer", ()
             currency: "INR",
             customerRef: "12345",
             idempotencyKey: "pay-1",
+            ownerUserId: customer.id,
         }
     );
 
@@ -81,6 +83,7 @@ test("payBill credits the biller's internal account and debits the customer", ()
             currency: "INR",
             customerRef: "12345",
             idempotencyKey: "pay-1",
+            ownerUserId: customer.id,
         }
     );
     assert.equal(t2.id, t.id);
@@ -105,6 +108,7 @@ test("payBill rejects unknown / inactive billers", () => {
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
         { toAccountId: fromAcc.id, amountMinor: 100_000, currency: "INR" }
     );
+    grantBankingAccess(env, customer.id);
 
     assert.throws(
         () =>
@@ -115,6 +119,7 @@ test("payBill rejects unknown / inactive billers", () => {
                     billerId: "00000000-0000-4000-8000-deadbeef0001",
                     amountMinor: 1000,
                     currency: "INR",
+                    ownerUserId: customer.id,
                 }
             ),
         BillerNotFoundError
@@ -128,6 +133,7 @@ test("payBill rejects unknown / inactive billers", () => {
                     billerId,
                     amountMinor: 1000,
                     currency: "INR",
+                    ownerUserId: customer.id,
                 }
             ),
         BillerInactiveError

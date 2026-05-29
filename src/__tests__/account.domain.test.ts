@@ -5,7 +5,8 @@ import {
     AccountCloseRequiresZeroBalanceError,
     AccountInvalidStatusTransitionError,
     AccountNotActiveError,
-    InsufficientFundsError,
+    InsufficientAvailableFundsError,
+    MinimumBalanceViolationError,
 } from "../contexts/accounts/domain/errors";
 
 const at = new Date("2026-05-01T00:00:00Z");
@@ -36,19 +37,22 @@ test("unfreeze restores Active and allows credit", () => {
     assert.equal(c.balanceMinor, 100);
 });
 
-test("debit underflow throws InsufficientFundsError", () => {
+test("debit underflow throws InsufficientAvailableFundsError", () => {
     const a = makeAcc();
-    assert.throws(() => debit(a, 1, "INR", at), (e) => e instanceof InsufficientFundsError);
+    assert.throws(
+        () => debit(a, 1, "INR", at),
+        (e) => e instanceof InsufficientAvailableFundsError
+    );
 });
 
 test("close requires balance=0", () => {
-    const a = credit(makeAcc(), 100, "INR", at);
+    const a = credit(makeAcc(), 100_000, "INR", at);
     assert.throws(
         () => close(a, at),
         (e) => e instanceof AccountCloseRequiresZeroBalanceError
     );
-    const back = debit(a, 100, "INR", at);
-    const closed = close(back, at);
+    const zeroed = { ...a, balanceMinor: 0, holdBalanceMinor: 0 };
+    const closed = close(zeroed, at);
     assert.equal(closed.status, "Closed");
 });
 

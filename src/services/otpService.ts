@@ -20,6 +20,7 @@ export const OTP_REQUIRED_ACTIONS: ReadonlySet<string> = new Set([
     "passkey.revoke",
     "password.change",
     "session.wipe",
+    "identity.contact.change",
     // Admin-issued recovery codes — the only sensitive-action proof on this
     // admin route. Not gated by step-up because we don't require admins to
     // have a passkey for routine writes; OTP keeps the bar high.

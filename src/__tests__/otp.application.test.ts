@@ -22,12 +22,13 @@ function reset() {
 
 test("OTP_REQUIRED_ACTIONS holds exactly the documented sensitive actions", () => {
     reset();
-    assert.equal(OTP_REQUIRED_ACTIONS.size, 5);
+    assert.equal(OTP_REQUIRED_ACTIONS.size, 6);
     for (const a of [
         "passkey.add",
         "passkey.revoke",
         "password.change",
         "session.wipe",
+        "identity.contact.change",
         "admin.recovery",
     ]) {
         assert.ok(isOtpRequired(a), `${a} should require OTP`);

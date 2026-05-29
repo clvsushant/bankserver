@@ -8,6 +8,8 @@ import { makeTransferRepo } from "../../payments/infrastructure/transferRepo";
 import { makeLedgerRepo } from "../../payments/infrastructure/ledgerRepo";
 import { makeUserRepo } from "../../identity/infrastructure/userRepo";
 import { makeBillerRepo } from "../infrastructure/billerRepo";
+import { makeKycRepo } from "../../kyc/infrastructure/kycRepo";
+import { assertBankingAccess } from "../../kyc/application/bankingAccess";
 import { credit, debit } from "../../accounts/domain/account";
 import { AccountNotFoundError } from "../../accounts/domain/errors";
 import {
@@ -29,6 +31,7 @@ export interface PayBillInput {
     currency: Currency;
     customerRef?: string;
     idempotencyKey?: string;
+    ownerUserId: string;
 }
 
 export function payBill(
@@ -39,6 +42,14 @@ export function payBill(
         throw new TransferAmountInvalidError();
     if (input.amountMinor > PER_BILL_MAX_MINOR)
         throw new TransferOverLimitError(PER_BILL_MAX_MINOR);
+
+    assertBankingAccess(
+        {
+            kyc: makeKycRepo(deps.db),
+            accounts: makeAccountRepo(deps.db),
+        },
+        input.ownerUserId
+    );
 
     const events: DomainEvent[] = [];
 
@@ -83,6 +94,7 @@ export function payBill(
             memo: input.customerRef,
             kind: "transfer",
             status: "posted",
+            rail: "internal",
             postedAt: now,
             referenceNumber: deps.ids.transactionReference(),
             feeMinor: 0,

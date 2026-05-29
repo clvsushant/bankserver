@@ -29,3 +29,9 @@ export class CrossUserFixedDepositTransferError extends Error {
         );
     }
 }
+
+export class TransferAggregateLimitError extends Error {
+    constructor(message: string) {
+        super(message);
+    }
+}

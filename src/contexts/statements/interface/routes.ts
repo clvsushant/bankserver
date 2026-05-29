@@ -4,6 +4,7 @@ import { isUuid } from "../../../utils/validate";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../../../utils/errors";
 import { getMonthlyStatement } from "../application/getMonthlyStatement";
 import { statementToCsv } from "../application/exportCsv";
+import { statementToPdfBase64 } from "../application/exportPdf";
 
 export const statementsRouter = express.Router();
 
@@ -55,6 +56,33 @@ statementsRouter.get("/:accountId/csv", (req, res, next) => {
         const csv = statementToCsv({ statement: stmt, accountNumber: acc.accountNumber });
         const filename = `statement-${acc.accountNumber}-${month}.csv`;
         res.json({ filename, csv });
+    } catch (err) {
+        next(err);
+    }
+});
+
+statementsRouter.get("/:accountId/pdf", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const { accountId } = req.params;
+        const month = (req.query.month as string | undefined) ?? defaultMonth();
+
+        if (!isUuid(accountId)) return next(new BadRequestError("Invalid accountId"));
+        if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+            return next(new BadRequestError("Invalid month (expected YYYY-MM)"));
+
+        const acc = container.repos.accounts.findById(accountId);
+        if (!acc) return next(new NotFoundError("Account not found"));
+        if (acc.userId !== user.id && user.role !== "admin")
+            return next(new ForbiddenError("Cannot view this account's statement"));
+
+        const stmt = getMonthlyStatement(container.db, { accountId, month });
+        const pdfBase64 = statementToPdfBase64({
+            statement: stmt,
+            accountNumber: acc.accountNumber,
+        });
+        const filename = `statement-${acc.accountNumber}-${month}.pdf`;
+        res.json({ filename, pdfBase64, contentType: "application/pdf" });
     } catch (err) {
         next(err);
     }

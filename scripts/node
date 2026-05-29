@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run Node from the version pinned in .nvmrc
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION="$(tr -d '[:space:]' < "${ROOT}/.nvmrc")"
+NVM_NODE="${HOME}/.nvm/versions/node/v${VERSION}/bin/node"
+if [ -f "${NVM_NODE}" ]; then
+  exec "${NVM_NODE}" "$@"
+fi
+if command -v node >/dev/null 2>&1; then
+  exec node "$@"
+fi
+echo "Missing Node ${VERSION} at ${NVM_NODE} and no node on PATH. Run: nvm install ${VERSION}" >&2
+exit 1

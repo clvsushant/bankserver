@@ -1,10 +1,11 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "../../../db/client";
 import { transfers } from "../../../db/schema";
 import type {
     Transfer,
     TransferCategory,
     TransferKind,
+    TransferRail,
     TransferStatus,
 } from "../domain/transfer";
 import type { Currency } from "../../../shared/money";
@@ -21,6 +22,9 @@ function toDomain(row: typeof transfers.$inferSelect): Transfer {
         memo: row.memo ?? undefined,
         kind: row.kind as TransferKind,
         status: row.status as TransferStatus,
+        rail: (row.rail as TransferRail) ?? "internal",
+        utr: row.utr ?? undefined,
+        failureReason: row.failureReason ?? undefined,
         postedAt: row.postedAt,
         referenceNumber: row.referenceNumber ?? undefined,
         feeMinor: row.feeMinor ?? 0,
@@ -31,6 +35,7 @@ function toDomain(row: typeof transfers.$inferSelect): Transfer {
         toUsername: row.toUsername ?? undefined,
         description: row.description ?? undefined,
         billerId: row.billerId ?? undefined,
+        cardId: row.cardId ?? undefined,
     };
 }
 
@@ -61,6 +66,9 @@ export function makeTransferRepo(db: Db): TransferRepo {
                     memo: t.memo ?? null,
                     kind: t.kind,
                     status: t.status,
+                    rail: t.rail,
+                    utr: t.utr ?? null,
+                    failureReason: t.failureReason ?? null,
                     postedAt: t.postedAt,
                     referenceNumber: t.referenceNumber ?? null,
                     feeMinor: t.feeMinor,
@@ -71,7 +79,20 @@ export function makeTransferRepo(db: Db): TransferRepo {
                     toUsername: t.toUsername ?? null,
                     description: t.description ?? null,
                     billerId: t.billerId ?? null,
+                    cardId: t.cardId ?? null,
                 })
+                .run();
+        },
+        update(t) {
+            db.update(transfers)
+                .set({
+                    status: t.status,
+                    utr: t.utr ?? null,
+                    failureReason: t.failureReason ?? null,
+                    postedAt: t.postedAt,
+                    description: t.description ?? null,
+                })
+                .where(eq(transfers.id, t.id))
                 .run();
         },
         list(limit) {
@@ -82,6 +103,26 @@ export function makeTransferRepo(db: Db): TransferRepo {
                 .limit(limit)
                 .all();
             return rows.map(toDomain);
+        },
+        listPendingByRail(rail) {
+            const rows = db
+                .select()
+                .from(transfers)
+                .where(and(eq(transfers.status, "pending"), eq(transfers.rail, rail)))
+                .orderBy(desc(transfers.postedAt))
+                .all();
+            return rows.map(toDomain);
+        },
+        settlePending(id, patch) {
+            db.update(transfers)
+                .set({
+                    status: patch.status,
+                    utr: patch.utr ?? null,
+                    postedAt: patch.postedAt,
+                    failureReason: patch.failureReason ?? null,
+                })
+                .where(and(eq(transfers.id, id), eq(transfers.status, "pending")))
+                .run();
         },
     };
 }

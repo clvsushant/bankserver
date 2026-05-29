@@ -76,6 +76,7 @@ standingInstructionsRouter.post(
                 repo: container.repos.standingInstructions,
                 accounts: container.repos.accounts,
                 beneficiaries: container.repos.beneficiaries,
+                kyc: container.repos.kyc,
                 ids: container.ids,
                 clock: container.clock,
                 bus: container.bus,

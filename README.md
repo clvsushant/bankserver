@@ -76,6 +76,7 @@ Pair it with the companion **bankwebui** SPA on `:5174` for the full UI.
 │   └── /accounts, /kyc, /transfer, /statements, /beneficiaries,  │
 │       /bills, /standing-instructions, /cards, /notifications    │
 │       └── encrypt + decrypt + requireSession                    │
+│           (+ requireBankingAccess on money-movement routes)     │
 │       /admin/*          └── + requireRole("admin")              │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -150,7 +151,9 @@ bankserver/
     │   ├── decrypt.ts              validates + decrypts incoming envelope
     │   ├── encrypt.ts              patches res.json to encrypt outgoing
     │   ├── auth.ts                 requireSession / requireRole
+    │   ├── banking-access.ts       requireBankingAccess (approved KYC + Active account)
     │   ├── step-up.ts              WebAuthn one-shot action token check
+    │   ├── otp.ts                  email OTP gate (chained before step-up on some routes)
     │   ├── rate-limit.ts           per-IP sliding-window limiter
     │   ├── request-id.ts           AsyncLocalStorage requestId
     │   └── security-headers.ts     CSP / Trusted Types / HSTS
@@ -162,6 +165,9 @@ bankserver/
     │   └── dev.ts                  /dev/login-as (dev-only)
     ├── services/
     │   ├── actionTokens.ts         HMAC + jti + paramsHash + 60s expiry
+    │   ├── transferLimits.ts       per-user daily / per-tx transfer caps
+    │   ├── cardLimits.ts           per-card daily / monthly / per-tx caps + tier defaults
+    │   ├── otpService.ts           email OTP issue / verify (stub or real)
     │   └── velocity.ts             per-(session,action) cap (5/min, 50/day)
     ├── shared/
     │   ├── clock.ts                Clock port + systemClock
@@ -188,8 +194,8 @@ bankserver/
     │   ├── standingInstructions/   recurring transfers + due-tick runner
     │   ├── statements/             month-bounded ledger view
     │   ├── notifications/          per-user notification feed
-    │   └── cards/                  debit-card issue / freeze / cancel
-    └── __tests__/                  19 test files, ~80 subtests
+    │   └── cards/                  debit-card issue / freeze / cancel / limits / demo spend
+    └── __tests__/                  33 test files, 145 subtests
 ```
 
 ## Request lifecycle
@@ -220,9 +226,25 @@ guard you'd see double-encrypted responses; the bug-fix lives in
 / `__responseEncryptionPatched` flag.
 
 For sensitive operations (transfers, password change, passkey revoke,
-session wipe-others), routes additionally apply `requireStepUp(action)` —
-the client must present a one-shot HMAC-signed `x-action-token` minted by
-`POST /webauthn/authentication/verify` and bound to a hash of the params.
+session wipe-others, card limit changes, etc.), routes additionally apply
+`requireStepUp(action)` — the client must present a one-shot HMAC-signed
+`x-action-token` minted by `POST /webauthn/authentication/verify` and
+bound to a hash of the params. Some identity routes also require a verified
+email OTP (`requireOtp`) before step-up.
+
+### Banking access (customer)
+
+Most customer money-movement routes apply `requireBankingAccess` after
+`requireSession`. Access is granted only when:
+
+1. The user has **at least one KYC application with status `Approved`**, and
+2. The user has **at least one `Active` account**.
+
+Logic lives in `contexts/kyc/application/bankingAccess.ts`
+(`getBankingAccess` / `assertBankingAccess`); the Express middleware is
+`middleware/banking-access.ts`. Violations return `403` with
+`KycBankingAccessDeniedError`. Settings, onboarding, and notifications are
+not gated — only routes that move money or depend on an open account.
 
 ## Bounded contexts
 
@@ -237,7 +259,7 @@ the client must present a one-shot HMAC-signed `x-action-token` minted by
 | **standingInstructions** | `/standing-instructions` | `standing_instructions` | `nextRunAt` advances on each successful run; failures kept in the run-result list, SI status is preserved (no auto-pause in the demo). |
 | **statements** | `/statements` | (read model over `ledger_entries`) | Calendar-month boundaries; opening = balance at start of month, closing = end of month, lines = ledger debit/credit pairs. |
 | **notifications** | `/notifications`, `/admin/notifications` | `notifications` | Per-user feed; `readAt` sets read state; emit-only (consumers are event subscribers in `container.ts`). |
-| **cards** | `/cards`, `/admin/cards` | `debit_cards` | Status (`active`/`frozen`/`cancelled`); only active accounts can be issued cards. |
+| **cards** | `/cards`, `/admin/cards` | `debit_cards` | Status (`active`/`frozen`/`cancelled`); per-card daily / monthly / per-txn limits (tier-capped); `POST /cards/:id/spend` debits the linked account via the transfer engine (demo merchant biller); limit preview + step-up on issue, limit update, and spend. |
 
 Each context lives at `src/contexts/<name>/{domain,application,infrastructure,interface}`.
 Use cases (e.g. `executeTransfer`) take `{ db, clock, ids, bus }` as
@@ -260,7 +282,7 @@ Subscriptions are wired in [`src/container.ts`](src/container.ts):
 | `MoneyMoved` | `executeTransfer` (and `faucetDeposit`) | Notifications emits `transfer.sent` / `transfer.received` |
 | `PasswordChanged` | `changePassword` | Notifications emits `password.changed` |
 | `PasskeyRevoked` | `revokeCredential` | Notifications emits `passkey.revoked` |
-| `DebitCardIssued` / `DebitCardFrozen` | `issueCard` / `freezeCard` | Notifications emits `card.issued` / `card.frozen` |
+| `DebitCardIssued` / `DebitCardFrozen` / card spend | `issueCard` / `freezeCard` / `simulateCardSpend` | Notifications emits `card.issued` / `card.frozen` / `card.spent` |
 | `StandingInstructionRan` | `runDueInstructions` | Notifications emits `standing.executed` |
 
 Everything happens in the same Node process and the same SQLite write path,
@@ -358,7 +380,7 @@ relative `swagger.yaml` references resolve correctly.
 | `npm run build` | `tsc` → `dist/`; also copies `src/api-docs/` so Swagger docs ship |
 | `npm start` | `node dist/main.js` |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | `node --test` over `src/__tests__/*.test.ts` (~80 subtests, ~6 s) |
+| `npm test` | `node --test` over `src/__tests__/*.test.ts` (145 subtests across 33 files, ~14 s) |
 | `npm run db:generate` | `drizzle-kit generate` (only when `schema.ts` changes) |
 | `npm run db:migrate` | Runs the embedded raw DDL — creates the SQLite file fresh if missing |
 | `npm run db:seed` | Idempotent: admin user + billers |
@@ -373,9 +395,11 @@ relative `swagger.yaml` references resolve correctly.
 npm test
 ```
 
-Output: ~80 subtests across 19 files. Highlights:
+Output: **145 subtests** across **33 files**. Highlights:
 
 - `aes.test.ts` (AES-256-GCM encrypt/decrypt with session-id AAD).
+- `banking-access.test.ts` — approved KYC + active account gate.
+- `card.limits.test.ts` — per-card caps, tier defaults, simulate spend.
 - `account.domain.test.ts` — open/credit/debit/freeze/close invariants.
 - `kyc.domain.test.ts` + `kyc.integration.test.ts` — submit / approve /
   reject + the `KycApproved` → Accounts subscriber.
@@ -387,6 +411,7 @@ Output: ~80 subtests across 19 files. Highlights:
   serialized response shape.
 - `phase4.beneficiaries|bills|cards|notifications|standingInstructions.test.ts`
   — per-context use-case suites.
+- `audit.*.test.ts`, `otp.*.test.ts`, `limits.test.ts` — audit log, OTP, transfer limits.
 - `identity.application.test.ts`, `.password.test.ts`, `.loginstate.test.ts`,
   `.routes.integration.test.ts` — the full identity + WebAuthn dance.
 - `statements.test.ts` — month boundary + December rollover.

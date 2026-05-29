@@ -1,6 +1,6 @@
 import express from "express";
 import { container } from "../../../container";
-import { isUuid } from "../../../utils/validate";
+import { isNonEmptyString, isUuid } from "../../../utils/validate";
 import {
     BadRequestError,
     ConflictError,
@@ -14,10 +14,23 @@ import {
     cancelCard,
     freezeCard,
     issueCard,
+    setCardLimits,
     unfreezeCard,
 } from "../application/manageCards";
-import { CardInvalidStateError, CardNotFoundError } from "../domain/errors";
+import { simulateCardSpend } from "../application/simulateCardSpend";
+import {
+    CardInvalidStateError,
+    CardLimitAboveBankMaxError,
+    CardLimitExceededError,
+    CardMerchantNotConfiguredError,
+    CardNotFoundError,
+    CardPerTxnLimitError,
+} from "../domain/errors";
 import { AccountNotFoundError } from "../../accounts/domain/errors";
+import { TransferAmountInvalidError } from "../../payments/domain/errors";
+import { previewCardLimits } from "../../../services/cardLimits";
+import { getKycTier } from "../../identity/application/kycTier";
+import { bankMaxForTier } from "../../../services/cardLimits";
 
 export const cardsRouter = express.Router();
 
@@ -35,6 +48,28 @@ cardsRouter.get("/mine", (req, res, next) => {
         res.json({ cards });
     } catch (err) {
         next(err);
+    }
+});
+
+cardsRouter.get("/:id/limits", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const { id } = req.params;
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        const card = mustOwnCard(user.id, id);
+        const preview = previewCardLimits(container.db, {
+            cardId: card.id,
+            limits: {
+                perTxnLimitMinor: card.perTxnLimitMinor,
+                dailyLimitMinor: card.dailyLimitMinor,
+                monthlyLimitMinor: card.monthlyLimitMinor,
+            },
+            now: container.clock.now(),
+        });
+        const kycTier = getKycTier({ users: container.repos.users }, user.id);
+        res.json({ limits: preview, bankMax: bankMaxForTier(kycTier), kycTier });
+    } catch (err) {
+        next(translate(err));
     }
 });
 
@@ -59,6 +94,7 @@ cardsRouter.post(
             {
                 repo: container.repos.cards,
                 accounts: container.repos.accounts,
+                users: container.repos.users,
                 ids: container.ids,
                 clock: container.clock,
             },
@@ -70,7 +106,6 @@ cardsRouter.post(
                     : undefined,
             }
         );
-        // Re-publish a domain event for the notifications subscriber.
         container.bus.publish([
             {
                 type: "DebitCardIssued",
@@ -82,6 +117,127 @@ cardsRouter.post(
             } as unknown as { type: string },
         ]);
         res.status(201).json({ card: serialize(card) });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
+cardsRouter.post(
+    "/:id/limits",
+    requireStepUp("card.limits.update"),
+    auditMiddleware(AuditActions.CardLimitsUpdated, {
+        target: (req) =>
+            req.params.id ? { type: "debit_card", id: req.params.id } : null,
+    }),
+    (req, res, next) => {
+    try {
+        const user = req.user!;
+        const { id } = req.params;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const perTxnLimitMinor = body.perTxnLimitMinor;
+        const dailyLimitMinor = body.dailyLimitMinor;
+        const monthlyLimitMinor = body.monthlyLimitMinor;
+
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        if (
+            typeof perTxnLimitMinor !== "number" ||
+            !Number.isInteger(perTxnLimitMinor) ||
+            perTxnLimitMinor <= 0
+        )
+            return next(new BadRequestError("Invalid perTxnLimitMinor"));
+        if (
+            typeof dailyLimitMinor !== "number" ||
+            !Number.isInteger(dailyLimitMinor) ||
+            dailyLimitMinor <= 0
+        )
+            return next(new BadRequestError("Invalid dailyLimitMinor"));
+        if (
+            typeof monthlyLimitMinor !== "number" ||
+            !Number.isInteger(monthlyLimitMinor) ||
+            monthlyLimitMinor <= 0
+        )
+            return next(new BadRequestError("Invalid monthlyLimitMinor"));
+
+        const card = setCardLimits(
+            {
+                repo: container.repos.cards,
+                accounts: container.repos.accounts,
+                users: container.repos.users,
+                clock: container.clock,
+            },
+            {
+                ownerUserId: user.id,
+                cardId: id,
+                perTxnLimitMinor,
+                dailyLimitMinor,
+                monthlyLimitMinor,
+            }
+        );
+        res.json({ card: serialize(card) });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
+cardsRouter.post(
+    "/:id/spend",
+    requireStepUp("card.spend"),
+    auditMiddleware(AuditActions.CardSpent, {
+        target: (req) =>
+            req.params.id ? { type: "debit_card", id: req.params.id } : null,
+    }),
+    (req, res, next) => {
+    try {
+        const user = req.user!;
+        const { id } = req.params;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const amountMinor = body.amountMinor;
+        const merchantName = body.merchantName;
+        const idempotencyKey = body.idempotencyKey;
+
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        if (typeof amountMinor !== "number" || !Number.isInteger(amountMinor) || amountMinor <= 0)
+            return next(new BadRequestError("Invalid amountMinor"));
+        if (
+            merchantName !== undefined &&
+            merchantName !== null &&
+            !isNonEmptyString(merchantName, 128)
+        )
+            return next(new BadRequestError("Invalid merchantName"));
+        if (
+            idempotencyKey !== undefined &&
+            idempotencyKey !== null &&
+            !isNonEmptyString(idempotencyKey, 128)
+        )
+            return next(new BadRequestError("Invalid idempotencyKey"));
+
+        const transfer = simulateCardSpend(
+            {
+                db: container.db,
+                clock: container.clock,
+                ids: container.ids,
+                bus: container.bus,
+                cards: container.repos.cards,
+                accounts: container.repos.accounts,
+                billers: container.repos.billers,
+            },
+            {
+                ownerUserId: user.id,
+                cardId: id,
+                amountMinor,
+                currency: "INR",
+                merchantName: typeof merchantName === "string" ? merchantName : undefined,
+                idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined,
+            }
+        );
+        res.json({
+            transfer: {
+                id: transfer.id,
+                referenceNumber: transfer.referenceNumber,
+                amountMinor: transfer.amountMinor,
+                description: transfer.description,
+            },
+        });
     } catch (err) {
         next(translate(err));
     }
@@ -176,6 +332,14 @@ cardsRouter.post(
     }
 });
 
+function mustOwnCard(ownerUserId: string, cardId: string) {
+    const card = container.repos.cards.findById(cardId);
+    if (!card) throw new CardNotFoundError();
+    const account = container.repos.accounts.findById(card.accountId);
+    if (!account || account.userId !== ownerUserId) throw new CardNotFoundError();
+    return card;
+}
+
 function serialize(c: ReturnType<typeof container.repos.cards.findById>) {
     if (!c) return null;
     return {
@@ -187,12 +351,20 @@ function serialize(c: ReturnType<typeof container.repos.cards.findById>) {
         issuedAt: c.issuedAt.toISOString(),
         frozenAt: c.frozenAt?.toISOString(),
         cancelledAt: c.cancelledAt?.toISOString(),
+        perTxnLimitMinor: c.perTxnLimitMinor,
+        dailyLimitMinor: c.dailyLimitMinor,
+        monthlyLimitMinor: c.monthlyLimitMinor,
     };
 }
 
 function translate(err: unknown): unknown {
     if (err instanceof CardNotFoundError) return new NotFoundError(err.message);
     if (err instanceof CardInvalidStateError) return new ConflictError(err.message);
+    if (err instanceof CardLimitExceededError) return new ConflictError(err.message);
+    if (err instanceof CardPerTxnLimitError) return new ConflictError(err.message);
+    if (err instanceof CardLimitAboveBankMaxError) return new BadRequestError(err.message);
+    if (err instanceof CardMerchantNotConfiguredError) return new ConflictError(err.message);
+    if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
     if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
     if (err instanceof HttpError) return err;
     return err;

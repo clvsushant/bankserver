@@ -4,6 +4,7 @@
 
 export type Role = "customer" | "admin";
 export type AccountStatus = "Active" | "Locked";
+export type KycTier = "none" | "basic" | "full";
 
 export interface User {
     readonly id: string;
@@ -15,6 +16,8 @@ export interface User {
     readonly failedAttempts: number;
     readonly lockedUntil?: Date;
     readonly passkeyEnrolled: boolean;
+    readonly kycTier: KycTier;
+    readonly mobile?: string;
     readonly createdAt: Date;
 }
 
@@ -39,6 +42,7 @@ export function createUser(input: {
         accountStatus: "Active",
         failedAttempts: 0,
         passkeyEnrolled: input.passkeyEnrolled ?? false,
+        kycTier: "none",
         createdAt: input.createdAt,
     };
 }

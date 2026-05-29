@@ -70,7 +70,7 @@ test("kyc submit + approve produces audit rows for both events", () => {
         }
     );
     approveKyc(
-        { repo: env.repos.kyc, clock: env.clock, bus: env.bus },
+        { repo: env.repos.kyc, users: env.repos.users, clock: env.clock, bus: env.bus },
         { applicationId: app.id, adminUserId: admin.id }
     );
 

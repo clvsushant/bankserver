@@ -94,6 +94,7 @@ billsRouter.post(
                 currency: "INR",
                 customerRef: typeof customerRef === "string" ? customerRef : undefined,
                 idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined,
+                ownerUserId: user.id,
             }
         );
         res.json({

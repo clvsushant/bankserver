@@ -24,6 +24,7 @@ import { hashPassword } from "../contexts/identity/application/passwords";
 import { createUser } from "../contexts/identity/domain/user";
 import { open } from "../contexts/accounts/domain/account";
 import type { BillerCategory } from "../contexts/bills/domain/biller";
+import { CARD_MERCHANT_BILLER_NAME } from "../services/cardLimits";
 
 const SEED_USERNAME = "Admin";
 const SEED_EMAIL = "admin@sentinel.bank";
@@ -31,6 +32,7 @@ const SEED_PASSWORD = "Admin@123";
 const SEED_ROLE = "admin" as const;
 
 const BILLER_SEEDS: Array<{ name: string; category: BillerCategory }> = [
+    { name: CARD_MERCHANT_BILLER_NAME, category: "other" },
     { name: "Sentinel Power Co.", category: "electricity" },
     { name: "GreenFlame Gas", category: "gas" },
     { name: "Aqua Munipality Water", category: "water" },

@@ -29,6 +29,10 @@ export const users = sqliteTable(
         passkeyEnrolled: integer("passkey_enrolled", { mode: "boolean" })
             .notNull()
             .default(false),
+        kycTier: text("kyc_tier", { enum: ["none", "basic", "full"] })
+            .notNull()
+            .default("none"),
+        mobile: text("mobile"),
         createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     },
     (t) => ({
@@ -140,6 +144,7 @@ export const accounts = sqliteTable(
             .notNull()
             .default("Active"),
         balanceMinor: integer("balance_minor", { mode: "number" }).notNull().default(0),
+        holdBalanceMinor: integer("hold_balance_minor", { mode: "number" }).notNull().default(0),
         currency: text("currency").notNull().default("INR"),
         createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
         updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -164,12 +169,101 @@ export const beneficiaries = sqliteTable(
         // Snapshot of the username at time of save — kept for display even
         // if the counterparty later renames.
         beneficiaryUsername: text("beneficiary_username"),
+        status: text("status", { enum: ["pending", "active"] }).notNull().default("pending"),
+        activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
+        verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
         createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
         lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
     },
     (t) => ({
         byOwner: index("beneficiaries_by_owner").on(t.ownerUserId),
         ownerAccUq: uniqueIndex("beneficiaries_owner_acc_uq").on(t.ownerUserId, t.accountNumber),
+    })
+);
+
+export const externalBeneficiaries = sqliteTable(
+    "external_beneficiaries",
+    {
+        id: text("id").primaryKey(),
+        ownerUserId: text("owner_user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        nickname: text("nickname").notNull(),
+        accountNumber: text("account_number").notNull(),
+        ifsc: text("ifsc").notNull(),
+        bankName: text("bank_name").notNull(),
+        beneficiaryName: text("beneficiary_name").notNull(),
+        vpa: text("vpa"),
+        preferredRail: text("preferred_rail", {
+            enum: ["imps", "neft", "rtgs", "upi"],
+        }),
+        status: text("status", { enum: ["pending", "active"] }).notNull().default("pending"),
+        activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
+        verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+        createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+        lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    },
+    (t) => ({
+        byOwner: index("ext_beneficiaries_by_owner").on(t.ownerUserId),
+        ownerAccIfscUq: uniqueIndex("ext_beneficiaries_owner_acc_ifsc_uq").on(
+            t.ownerUserId,
+            t.accountNumber,
+            t.ifsc
+        ),
+    })
+);
+
+export const fixedDeposits = sqliteTable(
+    "fixed_deposits",
+    {
+        id: text("id").primaryKey(),
+        accountId: text("account_id")
+            .notNull()
+            .references(() => accounts.id, { onDelete: "cascade" }),
+        userId: text("user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        payoutAccountId: text("payout_account_id")
+            .notNull()
+            .references(() => accounts.id),
+        principalMinor: integer("principal_minor", { mode: "number" }).notNull(),
+        tenureMonths: integer("tenure_months", { mode: "number" }).notNull(),
+        interestRateBps: integer("interest_rate_bps", { mode: "number" }).notNull(),
+        openedAt: integer("opened_at", { mode: "timestamp_ms" }).notNull(),
+        maturityAt: integer("maturity_at", { mode: "timestamp_ms" }).notNull(),
+        autoRenew: integer("auto_renew", { mode: "boolean" }).notNull().default(false),
+        status: text("status", {
+            enum: ["active", "matured", "premature_closed"],
+        })
+            .notNull()
+            .default("active"),
+        closedAt: integer("closed_at", { mode: "timestamp_ms" }),
+        interestPaidMinor: integer("interest_paid_minor", { mode: "number" }).notNull().default(0),
+    },
+    (t) => ({
+        byUser: index("fd_by_user").on(t.userId),
+        byAccount: uniqueIndex("fd_by_account_uq").on(t.accountId),
+        byMaturity: index("fd_by_maturity").on(t.status, t.maturityAt),
+    })
+);
+
+export const nominees = sqliteTable(
+    "nominees",
+    {
+        id: text("id").primaryKey(),
+        accountId: text("account_id")
+            .notNull()
+            .references(() => accounts.id, { onDelete: "cascade" }),
+        userId: text("user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        fullName: text("full_name").notNull(),
+        relation: text("relation").notNull(),
+        sharePercent: integer("share_percent", { mode: "number" }).notNull().default(100),
+        createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    },
+    (t) => ({
+        byAccount: index("nominees_by_account").on(t.accountId),
     })
 );
 
@@ -266,6 +360,9 @@ export const debitCards = sqliteTable(
         issuedAt: integer("issued_at", { mode: "timestamp_ms" }).notNull(),
         frozenAt: integer("frozen_at", { mode: "timestamp_ms" }),
         cancelledAt: integer("cancelled_at", { mode: "timestamp_ms" }),
+        perTxnLimitMinor: integer("per_txn_limit_minor", { mode: "number" }).notNull(),
+        dailyLimitMinor: integer("daily_limit_minor", { mode: "number" }).notNull(),
+        monthlyLimitMinor: integer("monthly_limit_minor", { mode: "number" }).notNull(),
     },
     (t) => ({
         byAccount: index("debit_cards_by_account").on(t.accountId),
@@ -284,8 +381,15 @@ export const transfers = sqliteTable(
         amountMinor: integer("amount_minor", { mode: "number" }).notNull(),
         currency: text("currency").notNull().default("INR"),
         memo: text("memo"),
-        kind: text("kind", { enum: ["transfer", "faucet"] }).notNull().default("transfer"),
-        status: text("status", { enum: ["posted", "failed"] }).notNull().default("posted"),
+        kind: text("kind", { enum: ["transfer", "faucet", "reversal"] }).notNull().default("transfer"),
+        status: text("status", { enum: ["pending", "posted", "failed"] }).notNull().default("posted"),
+        rail: text("rail", {
+            enum: ["internal", "imps", "neft", "rtgs", "upi"],
+        })
+            .notNull()
+            .default("internal"),
+        utr: text("utr"),
+        failureReason: text("failure_reason"),
         postedAt: integer("posted_at", { mode: "timestamp_ms" }).notNull(),
         // Phase 3 — rich transaction summary. All snapshots are written
         // inside the same SQL transaction as the ledger entries so the
@@ -293,7 +397,7 @@ export const transfers = sqliteTable(
         // among non-null values; pre-Phase-3 rows have NULL.
         referenceNumber: text("reference_number"),
         feeMinor: integer("fee_minor", { mode: "number" }).notNull().default(0),
-        category: text("category", { enum: ["p2p", "self", "faucet", "bill"] }),
+        category: text("category", { enum: ["p2p", "self", "faucet", "bill", "card"] }),
         fromAccountNumber: text("from_account_number"),
         toAccountNumber: text("to_account_number"),
         fromUsername: text("from_username"),
@@ -301,12 +405,14 @@ export const transfers = sqliteTable(
         description: text("description"),
         // Phase 4 #6 — links a bill payment back to its biller.
         billerId: text("biller_id"),
+        cardId: text("card_id").references(() => debitCards.id),
     },
     (t) => ({
         idemUq: uniqueIndex("transfers_idem_uq").on(t.idempotencyKey),
         byFrom: index("transfers_by_from").on(t.fromAccountId),
         byTo: index("transfers_by_to").on(t.toAccountId),
         byRef: uniqueIndex("transfers_ref_uq").on(t.referenceNumber),
+        byCard: index("transfers_by_card").on(t.cardId, t.postedAt),
     })
 );
 
@@ -329,6 +435,55 @@ export const ledgerEntries = sqliteTable(
         byAccount: index("ledger_by_account").on(t.accountId),
         byTransfer: index("ledger_by_transfer").on(t.transferId),
         byAccountPosted: index("ledger_by_account_posted").on(t.accountId, t.postedAt),
+    })
+);
+
+export const disputes = sqliteTable(
+    "disputes",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        transferId: text("transfer_id")
+            .notNull()
+            .references(() => transfers.id),
+        reason: text("reason").notNull(),
+        status: text("status", {
+            enum: ["submitted", "under_review", "approved", "rejected"],
+        })
+            .notNull()
+            .default("submitted"),
+        adminNote: text("admin_note"),
+        reversalTransferId: text("reversal_transfer_id").references(() => transfers.id),
+        createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+        decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+        decidedByUserId: text("decided_by_user_id").references(() => users.id),
+    },
+    (t) => ({
+        byUser: index("disputes_by_user").on(t.userId),
+        byTransfer: index("disputes_by_transfer").on(t.transferId),
+    })
+);
+
+export const adminPendingActions = sqliteTable(
+    "admin_pending_actions",
+    {
+        id: text("id").primaryKey(),
+        action: text("action").notNull(),
+        requestedByUserId: text("requested_by_user_id")
+            .notNull()
+            .references(() => users.id),
+        approvedByUserId: text("approved_by_user_id").references(() => users.id),
+        payload: text("payload").notNull(),
+        status: text("status", { enum: ["pending", "approved", "rejected", "executed"] })
+            .notNull()
+            .default("pending"),
+        createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+        decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    },
+    (t) => ({
+        byStatus: index("admin_pending_by_status").on(t.status, t.createdAt),
     })
 );
 

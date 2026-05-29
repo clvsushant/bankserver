@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../../../db/client";
 import { users } from "../../../db/schema";
-import type { AccountStatus, Role, User } from "../domain/user";
+import type { AccountStatus, KycTier, Role, User } from "../domain/user";
 import type { UserRepo } from "../application/ports";
 
 function toDomain(row: typeof users.$inferSelect): User {
@@ -15,6 +15,8 @@ function toDomain(row: typeof users.$inferSelect): User {
         failedAttempts: row.failedAttempts,
         lockedUntil: row.lockedUntil ?? undefined,
         passkeyEnrolled: row.passkeyEnrolled,
+        kycTier: (row.kycTier as KycTier) ?? "none",
+        mobile: row.mobile ?? undefined,
         createdAt: row.createdAt,
     };
 }
@@ -49,6 +51,8 @@ export function makeUserRepo(db: Db): UserRepo {
                     failedAttempts: user.failedAttempts,
                     lockedUntil: user.lockedUntil,
                     passkeyEnrolled: user.passkeyEnrolled,
+                    kycTier: user.kycTier,
+                    mobile: user.mobile ?? null,
                     createdAt: user.createdAt,
                 })
                 .run();
@@ -94,6 +98,15 @@ export function makeUserRepo(db: Db): UserRepo {
                 .set({ failedAttempts: 0, lockedUntil: null })
                 .where(eq(users.id, id))
                 .run();
+        },
+        setKycTier(id, tier) {
+            db.update(users).set({ kycTier: tier }).where(eq(users.id, id)).run();
+        },
+        setEmail(id, email) {
+            db.update(users).set({ email }).where(eq(users.id, id)).run();
+        },
+        setMobile(id, mobile) {
+            db.update(users).set({ mobile }).where(eq(users.id, id)).run();
         },
     };
 }

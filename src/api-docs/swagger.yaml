@@ -255,6 +255,16 @@ components:
             schema:
                 type: string
 
+    responses:
+        BankingAccessDenied:
+            description: |
+                Caller lacks approved KYC and/or an active account. Required before
+                transfer, beneficiaries, bills, cards, statements, and account mutations.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/EnvelopedResponse"
+
     securitySchemes:
         SessionId:
             type: apiKey
@@ -790,6 +800,15 @@ components:
                 balanceMinor:
                     type: integer
                     description: Balance in minor currency units (paise for INR).
+                holdBalanceMinor:
+                    type: integer
+                    description: Funds on hold (pending rails, liens). Default 0.
+                availableBalanceMinor:
+                    type: integer
+                    description: Spendable balance (balanceMinor − holdBalanceMinor).
+                minBalanceMinor:
+                    type: integer
+                    description: Minimum balance required for this account type (paise).
                 currency:
                     type: string
                     const: "INR"
@@ -806,6 +825,76 @@ components:
             properties:
                 accountType:
                     $ref: "#/components/schemas/AccountType"
+
+        FixedDeposit:
+            type: object
+            required:
+                - id
+                - accountId
+                - payoutAccountId
+                - principalMinor
+                - tenureMonths
+                - interestRateBps
+                - openedAt
+                - maturityAt
+                - autoRenew
+                - status
+                - interestPaidMinor
+            properties:
+                id: { type: string, format: uuid }
+                accountId: { type: string, format: uuid }
+                payoutAccountId: { type: string, format: uuid }
+                principalMinor: { type: integer, minimum: 1 }
+                tenureMonths: { type: integer, minimum: 7, maximum: 120 }
+                interestRateBps: { type: integer }
+                openedAt: { type: string, format: date-time }
+                maturityAt: { type: string, format: date-time }
+                autoRenew: { type: boolean }
+                status:
+                    type: string
+                    enum: [active, matured, premature_closed]
+                closedAt: { type: string, format: date-time }
+                interestPaidMinor: { type: integer }
+
+        OpenFixedDepositInput:
+            type: object
+            required: [payoutAccountId, principalMinor, tenureMonths]
+            properties:
+                payoutAccountId: { type: string, format: uuid }
+                principalMinor: { type: integer, minimum: 1000000 }
+                tenureMonths: { type: integer, minimum: 7, maximum: 120 }
+                autoRenew: { type: boolean }
+
+        TransferLimitsPreview:
+            type: object
+            properties:
+                dailyLimitMinor: { type: integer }
+                dailyUsedMinor: { type: integer }
+                dailyRemainingMinor: { type: integer }
+                monthlyLimitMinor: { type: integer }
+                monthlyUsedMinor: { type: integer }
+                monthlyRemainingMinor: { type: integer }
+
+        RailTransferInput:
+            type: object
+            required: [fromAccountId, toAccountNumber, amountMinor, rail]
+            properties:
+                fromAccountId: { type: string, format: uuid }
+                toAccountNumber: { type: string, maxLength: 32 }
+                amountMinor: { type: integer, minimum: 1 }
+                rail:
+                    type: string
+                    enum: [imps, neft, rtgs, upi]
+                vpa: { type: string, maxLength: 128 }
+
+        ContactChangeInput:
+            type: object
+            required: [field, value]
+            properties:
+                field:
+                    type: string
+                    enum: [email, mobile]
+                value: { type: string, maxLength: 128 }
 
         FaucetInput:
             type: object
@@ -977,7 +1066,14 @@ components:
                     $ref: "#/components/schemas/TransferKind"
                 status:
                     type: string
-                    const: "posted"
+                    enum: [pending, posted, failed]
+                rail:
+                    type: string
+                    enum: [internal, imps, neft, rtgs, upi]
+                utr:
+                    type: string
+                failureReason:
+                    type: string
                 postedAt:
                     type: string
                     format: date-time
@@ -1305,6 +1401,48 @@ components:
                 cancelledAt:
                     type: string
                     format: date-time
+                perTxnLimitMinor:
+                    type: integer
+                    description: Per-transaction spend cap in paise.
+                dailyLimitMinor:
+                    type: integer
+                    description: Daily spend cap in paise.
+                monthlyLimitMinor:
+                    type: integer
+                    description: Monthly spend cap in paise.
+
+        CardLimitsPreview:
+            type: object
+            required:
+                [
+                    dailyUsedMinor,
+                    dailyLimitMinor,
+                    monthlyUsedMinor,
+                    monthlyLimitMinor,
+                    perTxnLimitMinor,
+                ]
+            properties:
+                dailyUsedMinor: { type: integer }
+                dailyLimitMinor: { type: integer }
+                monthlyUsedMinor: { type: integer }
+                monthlyLimitMinor: { type: integer }
+                perTxnLimitMinor: { type: integer }
+
+        SetCardLimitsInput:
+            type: object
+            required: [perTxnLimitMinor, dailyLimitMinor, monthlyLimitMinor]
+            properties:
+                perTxnLimitMinor: { type: integer }
+                dailyLimitMinor: { type: integer }
+                monthlyLimitMinor: { type: integer }
+
+        SimulateCardSpendInput:
+            type: object
+            required: [amountMinor]
+            properties:
+                amountMinor: { type: integer }
+                merchantName: { type: string }
+                idempotencyKey: { type: string }
 
         IssueCardInput:
             type: object
@@ -2419,6 +2557,138 @@ paths:
                             schema:
                                 $ref: "#/components/schemas/EnvelopedResponse"
 
+    /accounts/fixed-deposits:
+        get:
+            operationId: getMyFixedDeposits
+            tags: [06-Accounts-Customer]
+            summary: List fixed deposits for the caller.
+            x-call-order: 4
+            x-depends-on: [getMyAccounts]
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [fixedDeposits]
+                        properties:
+                            fixedDeposits:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/FixedDeposit"
+                    description: Fixed deposit list.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+        post:
+            operationId: postOpenFixedDeposit
+            tags: [06-Accounts-Customer]
+            summary: Open a fixed deposit (step-up `fd.open`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            x-call-order: 5
+            x-depends-on: [postWebauthnAuthenticationVerify]
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+            requestBody:
+                x-decrypted-request:
+                    $ref: "#/components/schemas/OpenFixedDepositInput"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "201":
+                    x-decrypted-response:
+                        type: object
+                        required: [fixedDeposit]
+                        properties:
+                            fixedDeposit:
+                                $ref: "#/components/schemas/FixedDeposit"
+                    description: Opened fixed deposit.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
+    /accounts/fixed-deposits/{id}/premature-close:
+        post:
+            operationId: postPrematureCloseFixedDeposit
+            tags: [06-Accounts-Customer]
+            summary: Prematurely close an FD (step-up `fd.premature_close`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+                - name: id
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                      format: uuid
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [fixedDeposit]
+                        properties:
+                            fixedDeposit:
+                                $ref: "#/components/schemas/FixedDeposit"
+                    description: Prematurely closed FD.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
+    /accounts/{id}/close:
+        post:
+            operationId: postCloseAccount
+            tags: [06-Accounts-Customer]
+            summary: Close an account (step-up `account.close`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+                - name: id
+                  in: path
+                  required: true
+                  schema:
+                      type: string
+                      format: uuid
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [account]
+                        properties:
+                            account:
+                                $ref: "#/components/schemas/Account"
+                    description: Closed account.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
     # =========================================================================
     # 07-Accounts-Admin
     # =========================================================================
@@ -2604,6 +2874,8 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
         post:
             operationId: postAddBeneficiary
             tags: [08-Beneficiaries]
@@ -2645,6 +2917,8 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
 
     /beneficiaries/{id}/remove:
         post:
@@ -2735,8 +3009,113 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
                 "4XX":
                     description: Allocation failure or account isolation mismatch errors checklist.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
+    /transfer/limits:
+        get:
+            operationId: getTransferLimits
+            tags: [09-Payments]
+            summary: Preview daily/monthly transfer limits for the caller.
+            x-call-order: 1
+            x-depends-on: [getMyAccounts]
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [limits, kycTier]
+                        properties:
+                            limits:
+                                $ref: "#/components/schemas/TransferLimitsPreview"
+                            kycTier:
+                                type: string
+                                enum: [basic, full]
+                    description: Transfer limit preview.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
+
+    /transfer/rail:
+        post:
+            operationId: postRailTransfer
+            tags: [09-Payments]
+            summary: Execute IMPS/NEFT/RTGS/UPI transfer (step-up `transfer`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+            requestBody:
+                x-decrypted-request:
+                    $ref: "#/components/schemas/RailTransferInput"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [transfer]
+                        properties:
+                            transfer:
+                                $ref: "#/components/schemas/Transfer"
+                    description: Rail transfer result (may be pending for NEFT/RTGS).
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
+    /transfer/disputes:
+        get:
+            operationId: getMyDisputes
+            tags: [09-Payments]
+            summary: List disputes filed by the caller.
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [disputes]
+                        properties:
+                            disputes:
+                                type: array
+                                items:
+                                    type: object
+                    description: Dispute list.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+        post:
+            operationId: postFileDispute
+            tags: [09-Payments]
+            summary: File a dispute against a transfer.
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "201":
+                    description: Dispute filed.
                     content:
                         application/json:
                             schema:
@@ -3312,6 +3691,94 @@ paths:
                             schema:
                                 $ref: "#/components/schemas/EnvelopedResponse"
 
+    /cards/{id}/limits:
+        get:
+            operationId: getCardLimits
+            tags: [13-Cards]
+            summary: Preview card spend usage against configured limits.
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [limits, bankMax, kycTier]
+                        properties:
+                            limits:
+                                $ref: "#/components/schemas/CardLimitsPreview"
+                            bankMax:
+                                $ref: "#/components/schemas/CardLimitsPreview"
+                            kycTier:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
+        post:
+            operationId: postSetCardLimits
+            tags: [13-Cards]
+            summary: Update card spend limits (step-up `card.limits.update`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+            requestBody:
+                x-decrypted-request:
+                    $ref: "#/components/schemas/SetCardLimitsInput"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        type: object
+                        required: [card]
+                        properties:
+                            card:
+                                $ref: "#/components/schemas/DebitCard"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
+
+    /cards/{id}/spend:
+        post:
+            operationId: postSimulateCardSpend
+            tags: [13-Cards]
+            summary: Simulate a card payment debiting the linked account (step-up `card.spend`).
+            security:
+                - SessionId: []
+                  ActionToken: []
+            parameters:
+                - $ref: "#/components/parameters/SessionIdHeader"
+                - $ref: "#/components/parameters/ActionTokenHeader"
+            requestBody:
+                x-decrypted-request:
+                    $ref: "#/components/schemas/SimulateCardSpendInput"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+                "403":
+                    $ref: "#/components/responses/BankingAccessDenied"
+                "409":
+                    description: Card limit exceeded or card not active.
+
     /cards/{id}/freeze:
         post:
             operationId: postFreezeCard
@@ -3706,6 +4173,33 @@ paths:
                         Rotation tracking loop completed cleanly. Shape matches `SuccessResult`.
 
                         Decrypted body is a `DecryptedEnvelope` whose `data` field conforms to `SuccessResult`.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EnvelopedResponse"
+
+    /identity/contact/change:
+        post:
+            operationId: postChangeContact
+            tags: [15-Profile-Security]
+            summary: Change email or mobile (OTP + step-up `identity.contact.change`).
+            security:
+                - SessionId: []
+                  OtpToken: []
+                  ActionToken: []
+            requestBody:
+                x-decrypted-request:
+                    $ref: "#/components/schemas/ContactChangeInput"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/EnvelopedRequest"
+            responses:
+                "200":
+                    x-decrypted-response:
+                        $ref: "#/components/schemas/SuccessResult"
+                    description: Contact updated.
                     content:
                         application/json:
                             schema:

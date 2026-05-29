@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     account_type TEXT NOT NULL DEFAULT 'savings',
     status TEXT NOT NULL DEFAULT 'Active',
     balance_minor INTEGER NOT NULL DEFAULT 0,
+    hold_balance_minor INTEGER NOT NULL DEFAULT 0,
     currency TEXT NOT NULL DEFAULT 'INR',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -88,9 +89,62 @@ CREATE TABLE IF NOT EXISTS beneficiaries (
     nickname TEXT NOT NULL,
     account_number TEXT NOT NULL,
     beneficiary_username TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    activated_at INTEGER,
+    verified_at INTEGER,
     created_at INTEGER NOT NULL,
     last_used_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS external_beneficiaries (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    nickname TEXT NOT NULL,
+    account_number TEXT NOT NULL,
+    ifsc TEXT NOT NULL,
+    bank_name TEXT NOT NULL,
+    beneficiary_name TEXT NOT NULL,
+    vpa TEXT,
+    preferred_rail TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    activated_at INTEGER,
+    verified_at INTEGER,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS ext_beneficiaries_by_owner ON external_beneficiaries (owner_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ext_beneficiaries_owner_acc_ifsc_uq
+    ON external_beneficiaries (owner_user_id, account_number, ifsc);
+
+CREATE TABLE IF NOT EXISTS fixed_deposits (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    payout_account_id TEXT NOT NULL REFERENCES accounts(id),
+    principal_minor INTEGER NOT NULL,
+    tenure_months INTEGER NOT NULL,
+    interest_rate_bps INTEGER NOT NULL,
+    opened_at INTEGER NOT NULL,
+    maturity_at INTEGER NOT NULL,
+    auto_renew INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    closed_at INTEGER,
+    interest_paid_minor INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS fd_by_user ON fixed_deposits (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS fd_by_account_uq ON fixed_deposits (account_id);
+CREATE INDEX IF NOT EXISTS fd_by_maturity ON fixed_deposits (status, maturity_at);
+
+CREATE TABLE IF NOT EXISTS nominees (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    full_name TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    share_percent INTEGER NOT NULL DEFAULT 100,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nominees_by_account ON nominees (account_id);
 CREATE INDEX IF NOT EXISTS beneficiaries_by_owner ON beneficiaries (owner_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS beneficiaries_owner_acc_uq
     ON beneficiaries (owner_user_id, account_number);
@@ -144,7 +198,10 @@ CREATE TABLE IF NOT EXISTS debit_cards (
     status TEXT NOT NULL DEFAULT 'active',
     issued_at INTEGER NOT NULL,
     frozen_at INTEGER,
-    cancelled_at INTEGER
+    cancelled_at INTEGER,
+    per_txn_limit_minor INTEGER NOT NULL DEFAULT 1000000,
+    daily_limit_minor INTEGER NOT NULL DEFAULT 2500000,
+    monthly_limit_minor INTEGER NOT NULL DEFAULT 25000000
 );
 CREATE INDEX IF NOT EXISTS debit_cards_by_account ON debit_cards (account_id);
 
@@ -158,6 +215,9 @@ CREATE TABLE IF NOT EXISTS transfers (
     memo TEXT,
     kind TEXT NOT NULL DEFAULT 'transfer',
     status TEXT NOT NULL DEFAULT 'posted',
+    rail TEXT NOT NULL DEFAULT 'internal',
+    utr TEXT,
+    failure_reason TEXT,
     posted_at INTEGER NOT NULL,
     reference_number TEXT,
     fee_minor INTEGER NOT NULL DEFAULT 0,
@@ -167,12 +227,14 @@ CREATE TABLE IF NOT EXISTS transfers (
     from_username TEXT,
     to_username TEXT,
     description TEXT,
-    biller_id TEXT
+    biller_id TEXT,
+    card_id TEXT REFERENCES debit_cards(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS transfers_idem_uq ON transfers (idempotency_key);
 CREATE INDEX IF NOT EXISTS transfers_by_from ON transfers (from_account_id);
 CREATE INDEX IF NOT EXISTS transfers_by_to ON transfers (to_account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS transfers_ref_uq ON transfers (reference_number);
+CREATE INDEX IF NOT EXISTS transfers_by_card ON transfers (card_id, posted_at);
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
     id TEXT PRIMARY KEY,
@@ -214,6 +276,33 @@ CREATE INDEX IF NOT EXISTS audit_by_action ON audit_log (action, occurred_at);
 CREATE INDEX IF NOT EXISTS audit_by_target ON audit_log (target_type, target_id);
 CREATE INDEX IF NOT EXISTS audit_by_time ON audit_log (occurred_at);
 CREATE UNIQUE INDEX IF NOT EXISTS audit_by_seq_uq ON audit_log (seq);
+
+CREATE TABLE IF NOT EXISTS disputes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    transfer_id TEXT NOT NULL REFERENCES transfers(id),
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'submitted',
+    admin_note TEXT,
+    reversal_transfer_id TEXT REFERENCES transfers(id),
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER,
+    decided_by_user_id TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS disputes_by_user ON disputes (user_id);
+CREATE INDEX IF NOT EXISTS disputes_by_transfer ON disputes (transfer_id);
+
+CREATE TABLE IF NOT EXISTS admin_pending_actions (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    requested_by_user_id TEXT NOT NULL REFERENCES users(id),
+    approved_by_user_id TEXT REFERENCES users(id),
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS admin_pending_by_status ON admin_pending_actions (status, created_at);
 `;
 
 /**
@@ -316,9 +405,74 @@ const upgrades: Array<{ table: string; column: string; ddl: string }> = [
         column: "biller_id",
         ddl: "ALTER TABLE transfers ADD COLUMN biller_id TEXT",
     },
+    {
+        table: "users",
+        column: "kyc_tier",
+        ddl: "ALTER TABLE users ADD COLUMN kyc_tier TEXT NOT NULL DEFAULT 'none'",
+    },
+    {
+        table: "users",
+        column: "mobile",
+        ddl: "ALTER TABLE users ADD COLUMN mobile TEXT",
+    },
+    {
+        table: "accounts",
+        column: "hold_balance_minor",
+        ddl: "ALTER TABLE accounts ADD COLUMN hold_balance_minor INTEGER NOT NULL DEFAULT 0",
+    },
+    {
+        table: "beneficiaries",
+        column: "status",
+        ddl: "ALTER TABLE beneficiaries ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+    },
+    {
+        table: "beneficiaries",
+        column: "activated_at",
+        ddl: "ALTER TABLE beneficiaries ADD COLUMN activated_at INTEGER",
+    },
+    {
+        table: "beneficiaries",
+        column: "verified_at",
+        ddl: "ALTER TABLE beneficiaries ADD COLUMN verified_at INTEGER",
+    },
+    {
+        table: "transfers",
+        column: "rail",
+        ddl: "ALTER TABLE transfers ADD COLUMN rail TEXT NOT NULL DEFAULT 'internal'",
+    },
+    {
+        table: "transfers",
+        column: "utr",
+        ddl: "ALTER TABLE transfers ADD COLUMN utr TEXT",
+    },
+    {
+        table: "transfers",
+        column: "failure_reason",
+        ddl: "ALTER TABLE transfers ADD COLUMN failure_reason TEXT",
+    },
+    {
+        table: "debit_cards",
+        column: "per_txn_limit_minor",
+        ddl: "ALTER TABLE debit_cards ADD COLUMN per_txn_limit_minor INTEGER NOT NULL DEFAULT 1000000",
+    },
+    {
+        table: "debit_cards",
+        column: "daily_limit_minor",
+        ddl: "ALTER TABLE debit_cards ADD COLUMN daily_limit_minor INTEGER NOT NULL DEFAULT 2500000",
+    },
+    {
+        table: "debit_cards",
+        column: "monthly_limit_minor",
+        ddl: "ALTER TABLE debit_cards ADD COLUMN monthly_limit_minor INTEGER NOT NULL DEFAULT 25000000",
+    },
+    {
+        table: "transfers",
+        column: "card_id",
+        ddl: "ALTER TABLE transfers ADD COLUMN card_id TEXT REFERENCES debit_cards(id)",
+    },
 ];
 
-function applyUpgrades() {
+export function applyUpgradesTo(sqlite: { exec: (sql: string) => void }) {
     for (const up of upgrades) {
         try {
             sqlite.exec(up.ddl);
@@ -328,10 +482,16 @@ function applyUpgrades() {
             throw e;
         }
     }
-    // Index added in Phase 3; idempotent.
     sqlite.exec(
         "CREATE UNIQUE INDEX IF NOT EXISTS transfers_ref_uq ON transfers (reference_number)"
     );
+    sqlite.exec(
+        "CREATE INDEX IF NOT EXISTS transfers_by_card ON transfers (card_id, posted_at)"
+    );
+}
+
+function applyUpgrades() {
+    applyUpgradesTo(sqlite);
 }
 
 export function migrate(): void {

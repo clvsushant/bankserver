@@ -13,6 +13,7 @@ function toDomain(row: typeof accounts.$inferSelect): Account {
         accountType: row.accountType as AccountType,
         status: row.status as AccountStatus,
         balanceMinor: row.balanceMinor,
+        holdBalanceMinor: row.holdBalanceMinor ?? 0,
         currency: row.currency as Currency,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
@@ -51,6 +52,7 @@ export function makeAccountRepo(db: Db): AccountRepo {
                     accountType: a.accountType,
                     status: a.status,
                     balanceMinor: a.balanceMinor,
+                    holdBalanceMinor: a.holdBalanceMinor,
                     currency: a.currency,
                     createdAt: a.createdAt,
                     updatedAt: a.updatedAt,
@@ -62,6 +64,7 @@ export function makeAccountRepo(db: Db): AccountRepo {
                 .set({
                     status: a.status,
                     balanceMinor: a.balanceMinor,
+                    holdBalanceMinor: a.holdBalanceMinor,
                     currency: a.currency,
                     updatedAt: a.updatedAt,
                 })

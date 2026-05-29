@@ -5,9 +5,11 @@ import type { KycApplication } from "../domain/kycApplication";
 import type { KycEvent } from "../domain/events";
 import { KycNotFoundError } from "../domain/errors";
 import type { KycRepo } from "./ports";
+import type { UserRepo } from "../../identity/application/ports";
+import { setKycTier } from "../../identity/application/kycTier";
 
 export function approveKyc(
-    deps: { repo: KycRepo; clock: Clock; bus: EventBus },
+    deps: { repo: KycRepo; users?: UserRepo; clock: Clock; bus: EventBus },
     args: { applicationId: string; adminUserId: string }
 ): KycApplication {
     const current = deps.repo.findById(args.applicationId);
@@ -15,6 +17,10 @@ export function approveKyc(
 
     const next = approve(current, { adminUserId: args.adminUserId, at: deps.clock.now() });
     deps.repo.update(next);
+
+    if (deps.users) {
+        setKycTier({ users: deps.users }, next.userId, "full");
+    }
 
     const event: KycEvent = {
         type: "KycApproved",

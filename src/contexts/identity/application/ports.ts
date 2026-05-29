@@ -1,4 +1,4 @@
-import type { User, Role, AccountStatus } from "../domain/user";
+import type { User, Role, AccountStatus, KycTier } from "../domain/user";
 import type { WebAuthnCredential } from "../domain/credential";
 import type { RecoveryCode } from "../domain/recoveryCode";
 
@@ -17,6 +17,9 @@ export interface UserRepo {
      */
     recordFailedAttempt(id: string, lockedUntil: Date | undefined): void;
     resetFailedAttempts(id: string): void;
+    setKycTier(id: string, tier: KycTier): void;
+    setEmail(id: string, email: string): void;
+    setMobile(id: string, mobile: string): void;
 }
 
 export interface CredentialRepo {

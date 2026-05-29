@@ -108,7 +108,12 @@ kycAdminRouter.post(
         const { id } = req.params;
         if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
         const result = approveKyc(
-            { repo: container.repos.kyc, clock: container.clock, bus: container.bus },
+            {
+                repo: container.repos.kyc,
+                users: container.repos.users,
+                clock: container.clock,
+                bus: container.bus,
+            },
             { applicationId: id, adminUserId: adminUser.id }
         );
         res.json({ application: serialize(result) });

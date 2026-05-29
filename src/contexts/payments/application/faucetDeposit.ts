@@ -68,6 +68,7 @@ export function faucetDeposit(
             memo: input.memo ?? "Faucet deposit",
             kind: "faucet",
             status: "posted",
+            rail: "internal",
             postedAt: now,
             referenceNumber: deps.ids.transactionReference(),
             feeMinor: 0,

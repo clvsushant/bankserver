@@ -22,9 +22,41 @@ export class AccountCloseRequiresZeroBalanceError extends Error {
     }
 }
 
+export class AccountCloseBlockedError extends Error {
+    constructor(reason: string) {
+        super(`Cannot close account: ${reason}`);
+    }
+}
+
 export class InsufficientFundsError extends Error {
     constructor() {
         super("Insufficient funds");
+    }
+}
+
+export class InsufficientAvailableFundsError extends Error {
+    constructor() {
+        super("Insufficient available balance");
+    }
+}
+
+export class MinimumBalanceViolationError extends Error {
+    readonly minBalanceMinor: number;
+    constructor(minBalanceMinor: number) {
+        super(`Debit would breach minimum balance of ${minBalanceMinor} paise`);
+        this.minBalanceMinor = minBalanceMinor;
+    }
+}
+
+export class HoldExceedsBalanceError extends Error {
+    constructor() {
+        super("Hold amount exceeds account balance");
+    }
+}
+
+export class FixedDepositWithdrawalBlockedError extends Error {
+    constructor() {
+        super("Fixed deposit principal cannot be withdrawn via transfer; use premature closure or wait for maturity");
     }
 }
 

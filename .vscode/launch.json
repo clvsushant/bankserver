@@ -1,0 +1,37 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug BankServer",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "${env:HOME}/.nvm/versions/node/v24.15.0/bin/node",
+            "runtimeArgs": ["-r", "ts-node/register"],
+            "program": "${workspaceFolder}/src/main.ts",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "TS_NODE_TRANSPILE_ONLY": "true"
+            }
+        },
+        {
+            "name": "Debug BankServer (Production)",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "${env:HOME}/.nvm/versions/node/v24.15.0/bin/node",
+            "runtimeArgs": ["-r", "ts-node/register"],
+            "program": "${workspaceFolder}/src/main.ts",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+            "envFile": "${workspaceFolder}/.env.production",
+            "env": {
+                "TS_NODE_TRANSPILE_ONLY": "true"
+            }
+        }
+    ]
+}

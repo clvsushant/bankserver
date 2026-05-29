@@ -17,10 +17,14 @@ import { makeCredentialRepo } from "./contexts/identity/infrastructure/credentia
 import { makeRecoveryCodeRepo } from "./contexts/identity/infrastructure/recoveryCodeRepo";
 import { makeKycRepo } from "./contexts/kyc/infrastructure/kycRepo";
 import { makeAccountRepo } from "./contexts/accounts/infrastructure/accountRepo";
+import { makeFixedDepositRepo } from "./contexts/accounts/infrastructure/fixedDepositRepo";
+import { makeNomineeRepo } from "./contexts/accounts/infrastructure/nomineeRepo";
 import { createAccountForUser } from "./contexts/accounts/application/createAccount";
 import { makeTransferRepo } from "./contexts/payments/infrastructure/transferRepo";
 import { makeLedgerRepo } from "./contexts/payments/infrastructure/ledgerRepo";
 import { makeBeneficiaryRepo } from "./contexts/beneficiaries/infrastructure/beneficiaryRepo";
+import { makeExternalBeneficiaryRepo } from "./contexts/beneficiaries/infrastructure/externalBeneficiaryRepo";
+import { makeDisputeRepo } from "./contexts/payments/infrastructure/disputeRepo";
 import { makeBillerRepo } from "./contexts/bills/infrastructure/billerRepo";
 import { makeStandingInstructionRepo } from "./contexts/standingInstructions/infrastructure/standingInstructionRepo";
 import { makeNotificationRepo } from "./contexts/notifications/infrastructure/notificationRepo";
@@ -30,6 +34,7 @@ import { recordAudit } from "./contexts/audit/application/recordAudit";
 import { fromBusEvent } from "./contexts/audit/application/fromBusEvent";
 import { stubOtpDelivery, type OtpDeliveryProvider } from "./services/otpDelivery";
 import type { KycApprovedEvent, KycRejectedEvent } from "./contexts/kyc/domain/events";
+import type { CardSpentEvent } from "./contexts/cards/domain/events";
 import type { MoneyMovedEvent } from "./contexts/payments/domain/events";
 import { emitNotification } from "./contexts/notifications/application/createNotification";
 import { inrFmtMinor } from "./shared/money";
@@ -50,9 +55,13 @@ export const container = {
         recoveryCodes: makeRecoveryCodeRepo(db),
         kyc: makeKycRepo(db),
         accounts: makeAccountRepo(db),
+        fixedDeposits: makeFixedDepositRepo(db),
+        nominees: makeNomineeRepo(db),
         transfers: makeTransferRepo(db),
         ledger: makeLedgerRepo(db),
+        disputes: makeDisputeRepo(db),
         beneficiaries: makeBeneficiaryRepo(db),
+        externalBeneficiaries: makeExternalBeneficiaryRepo(db),
         billers: makeBillerRepo(db),
         standingInstructions: makeStandingInstructionRepo(db),
         notifications: makeNotificationRepo(db),
@@ -245,6 +254,20 @@ container.bus.subscribe<DebitCardFrozenEvent>("DebitCardFrozen", (event) => {
             kind: "card.frozen",
             title: "Debit card frozen",
             body: `Card ${event.maskedNumber} is now frozen.`,
+            relatedEntityType: "card",
+            relatedEntityId: event.cardId,
+        }
+    );
+});
+
+container.bus.subscribe<CardSpentEvent>("CardSpent", (event) => {
+    emitNotification(
+        { repo: container.repos.notifications, ids: container.ids, clock: container.clock },
+        {
+            userId: event.ownerUserId,
+            kind: "card.spent",
+            title: "Card payment",
+            body: `${inrFmtMinor(event.amountMinor)} at ${event.merchantName}.`,
             relatedEntityType: "card",
             relatedEntityId: event.cardId,
         }

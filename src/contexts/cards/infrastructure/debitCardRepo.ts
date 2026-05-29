@@ -14,6 +14,9 @@ function toDomain(row: typeof debitCards.$inferSelect): DebitCard {
         issuedAt: row.issuedAt,
         frozenAt: row.frozenAt ?? undefined,
         cancelledAt: row.cancelledAt ?? undefined,
+        perTxnLimitMinor: row.perTxnLimitMinor,
+        dailyLimitMinor: row.dailyLimitMinor,
+        monthlyLimitMinor: row.monthlyLimitMinor,
     };
 }
 
@@ -43,6 +46,9 @@ export function makeDebitCardRepo(db: Db): DebitCardRepo {
                     issuedAt: card.issuedAt,
                     frozenAt: card.frozenAt ?? null,
                     cancelledAt: card.cancelledAt ?? null,
+                    perTxnLimitMinor: card.perTxnLimitMinor,
+                    dailyLimitMinor: card.dailyLimitMinor,
+                    monthlyLimitMinor: card.monthlyLimitMinor,
                 })
                 .run();
         },
@@ -52,6 +58,9 @@ export function makeDebitCardRepo(db: Db): DebitCardRepo {
                     status: card.status,
                     frozenAt: card.frozenAt ?? null,
                     cancelledAt: card.cancelledAt ?? null,
+                    perTxnLimitMinor: card.perTxnLimitMinor,
+                    dailyLimitMinor: card.dailyLimitMinor,
+                    monthlyLimitMinor: card.monthlyLimitMinor,
                 })
                 .where(eq(debitCards.id, card.id))
                 .run();

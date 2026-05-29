@@ -30,7 +30,7 @@ test("monthly statement includes only the requested month", () => {
     env.clock.set(new Date("2026-04-15T10:00:00Z"));
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aAcc.id, amountMinor: 200_00, currency: "INR" }
+        { toAccountId: aAcc.id, amountMinor: 200_000, currency: "INR" }
     );
     env.clock.set(new Date("2026-04-20T10:00:00Z"));
     executeTransfer(
@@ -58,15 +58,15 @@ test("monthly statement includes only the requested month", () => {
     const apr = getMonthlyStatement(env.db, { accountId: aAcc.id, month: "2026-04" });
     assert.equal(apr.month, "2026-04");
     assert.equal(apr.lines.length, 2); // credit (faucet) + debit (transfer)
-    assert.equal(apr.totalCreditMinor, 200_00);
+    assert.equal(apr.totalCreditMinor, 200_000);
     assert.equal(apr.totalDebitMinor, 50_00);
     assert.equal(apr.openingBalanceMinor, 0);
-    assert.equal(apr.closingBalanceMinor, 150_00);
+    assert.equal(apr.closingBalanceMinor, 200_000 - 50_00);
 
     const may = getMonthlyStatement(env.db, { accountId: aAcc.id, month: "2026-05" });
     assert.equal(may.lines.length, 1);
     assert.equal(may.totalDebitMinor, 25_00);
-    assert.equal(may.closingBalanceMinor, 125_00);
+    assert.equal(may.closingBalanceMinor, 200_000 - 50_00 - 25_00);
 });
 
 test("invalid month string throws", () => {

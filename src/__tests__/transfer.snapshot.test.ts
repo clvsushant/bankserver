@@ -98,6 +98,7 @@ test("self-transfer between own accounts is categorized as 'self'", () => {
         accountType: "savings" as const,
         status: "Active" as const,
         balanceMinor: 0,
+        holdBalanceMinor: 0,
         currency: "INR" as const,
         createdAt: env.clock.now(),
         updatedAt: env.clock.now(),

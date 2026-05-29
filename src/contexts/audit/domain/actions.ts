@@ -25,9 +25,14 @@ export const AuditActions = {
     AuthOtpRequested: "auth.otp.requested",
     AuthOtpVerified: "auth.otp.verified",
     AuthOtpFailed: "auth.otp.failed",
+    IdentityContactChanged: "identity.contact.changed",
 
     // --- money / payments ---
     TransferExecuted: "transfer.executed",
+    TransferRailExecuted: "transfer.rail.executed",
+    TransferSettled: "transfer.settled",
+    DisputeFiled: "dispute.filed",
+    DisputeDecided: "dispute.decided",
     FaucetCredited: "faucet.credited",
     BillPaid: "bill.paid",
     StandingInstructionRan: "si.ran",
@@ -41,6 +46,9 @@ export const AuditActions = {
     AccountFrozen: "account.frozen",
     AccountUnfrozen: "account.unfrozen",
     AccountClosed: "account.closed",
+    FixedDepositOpened: "account.fd.opened",
+    FixedDepositPrematureClosed: "account.fd.premature_closed",
+    FixedDepositMatured: "account.fd.matured",
 
     // --- kyc ---
     KycSubmitted: "kyc.submitted",
@@ -56,6 +64,8 @@ export const AuditActions = {
     CardIssued: "card.issued",
     CardFrozen: "card.frozen",
     CardCancelled: "card.cancelled",
+    CardLimitsUpdated: "card.limits.updated",
+    CardSpent: "card.spent",
 
     // --- admin reads (privileged) ---
     AdminKycListed: "admin.kyc.listed",
@@ -76,6 +86,8 @@ export const AuditActions = {
     AdminFaucetIssued: "admin.faucet.issued",
     AdminStandingInstructionsRan: "admin.si.ran",
     AdminRecoveryCodeIssued: "admin.recovery.code.issued",
+    AdminPendingActionCreated: "admin.pending.created",
+    AdminPendingActionApproved: "admin.pending.approved",
 } as const;
 
 export type AuditAction = (typeof AuditActions)[keyof typeof AuditActions];
@@ -109,7 +121,12 @@ export function categoryOf(action: AuditAction): AuditCategory {
     if (action.startsWith("bill.")) return "bill";
     if (action.startsWith("si.")) return "si";
     if (action.startsWith("card.")) return "card";
-    if (action.startsWith("transfer.") || action.startsWith("faucet.")) return "money";
+    if (
+        action.startsWith("transfer.") ||
+        action.startsWith("faucet.") ||
+        action.startsWith("dispute.")
+    )
+        return "money";
     if (action.startsWith("admin.")) {
         // Reads end in .listed / .viewed / .exported / .verified.
         if (

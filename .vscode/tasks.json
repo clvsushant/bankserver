@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Format Backend",
+            "type": "shell",
+            "command": "npm run format",
+            "options": {
+                "cwd": "${workspaceFolder"
+            },
+            "group": "build",
+            "detail": "Formats code in the backend project"
+        }
+    ]
+}

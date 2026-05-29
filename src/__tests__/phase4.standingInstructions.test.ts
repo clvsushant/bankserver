@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { makeTestEnv } from "./_setup";
+import { makeTestEnv, grantBankingAccess } from "./_setup";
 import { findOrCreateUser } from "../contexts/identity/application/registerUser";
 import { createAccountForUser } from "../contexts/accounts/application/createAccount";
 import { faucetDeposit } from "../contexts/payments/application/faucetDeposit";
@@ -53,16 +53,22 @@ function setup() {
     return { env, owner, target, fromAcc, toAcc, beneficiary };
 }
 
+function siDeps(env: ReturnType<typeof makeTestEnv>) {
+    return {
+        repo: env.repos.standingInstructions,
+        accounts: env.repos.accounts,
+        beneficiaries: env.repos.beneficiaries,
+        kyc: env.repos.kyc,
+        ids: env.ids,
+        clock: env.clock,
+    };
+}
+
 test("createStandingInstruction schedules nextRunAt one tick ahead", () => {
     const { env, owner, fromAcc, beneficiary } = setup();
+    grantBankingAccess(env, owner.id);
     const si = createStandingInstruction(
-        {
-            repo: env.repos.standingInstructions,
-            accounts: env.repos.accounts,
-            beneficiaries: env.repos.beneficiaries,
-            ids: env.ids,
-            clock: env.clock,
-        },
+        siDeps(env),
         {
             ownerUserId: owner.id,
             fromAccountId: fromAcc.id,
@@ -78,14 +84,9 @@ test("createStandingInstruction schedules nextRunAt one tick ahead", () => {
 
 test("pause / resume / cancel transitions and idempotency", () => {
     const { env, owner, fromAcc, beneficiary } = setup();
+    grantBankingAccess(env, owner.id);
     const si = createStandingInstruction(
-        {
-            repo: env.repos.standingInstructions,
-            accounts: env.repos.accounts,
-            beneficiaries: env.repos.beneficiaries,
-            ids: env.ids,
-            clock: env.clock,
-        },
+        siDeps(env),
         {
             ownerUserId: owner.id,
             fromAccountId: fromAcc.id,
@@ -130,14 +131,9 @@ test("pause / resume / cancel transitions and idempotency", () => {
 
 test("runDueInstructions posts a transfer and advances nextRunAt; idempotent on tick repeat", () => {
     const { env, owner, fromAcc, beneficiary, toAcc } = setup();
+    grantBankingAccess(env, owner.id);
     const si = createStandingInstruction(
-        {
-            repo: env.repos.standingInstructions,
-            accounts: env.repos.accounts,
-            beneficiaries: env.repos.beneficiaries,
-            ids: env.ids,
-            clock: env.clock,
-        },
+        siDeps(env),
         {
             ownerUserId: owner.id,
             fromAccountId: fromAcc.id,

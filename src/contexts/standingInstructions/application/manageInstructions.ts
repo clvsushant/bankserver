@@ -23,6 +23,8 @@ import type {
 import { AccountNotFoundError } from "../../accounts/domain/errors";
 import { BeneficiaryNotFoundError } from "../../beneficiaries/domain/errors";
 import type { StandingInstructionRepo } from "./ports";
+import type { KycRepo } from "../../kyc/application/ports";
+import { assertBankingAccess } from "../../kyc/application/bankingAccess";
 
 export interface CreateInstructionInput {
     ownerUserId: string;
@@ -41,12 +43,18 @@ export function createStandingInstruction(
         repo: StandingInstructionRepo;
         accounts: AccountRepo;
         beneficiaries: BeneficiaryRepo;
+        kyc: KycRepo;
         ids: IdGenerator;
         clock: Clock;
         bus?: EventBus;
     },
     input: CreateInstructionInput
 ): StandingInstruction {
+    assertBankingAccess(
+        { kyc: deps.kyc, accounts: deps.accounts },
+        input.ownerUserId
+    );
+
     const from = deps.accounts.findById(input.fromAccountId);
     if (!from) throw new AccountNotFoundError();
     if (from.userId !== input.ownerUserId) throw new AccountNotFoundError();

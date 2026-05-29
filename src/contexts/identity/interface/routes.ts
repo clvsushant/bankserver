@@ -29,6 +29,7 @@ import { requireStepUp } from "../../../middleware/step-up";
 import { signupUser } from "../application/registerUser";
 import { loginWithPassword } from "../application/login";
 import { changePassword } from "../application/changePassword";
+import { changeEmail, changeMobile } from "../application/changeContact";
 import { consumeRecoveryCode } from "../application/recoveryCodes";
 import {
     clearLoginState,
@@ -627,6 +628,38 @@ router.post(
             }
         } catch (err) {
             next(err);
+        }
+    }
+);
+
+/**
+ * POST /identity/contact/change — update email or mobile with OTP + step-up.
+ * Body: { field: "email"|"mobile", value: string }
+ */
+router.post(
+    "/contact/change",
+    requireSession,
+    requireOtp("identity.contact.change"),
+    requireStepUp("identity.contact.change"),
+    auditMiddleware(AuditActions.IdentityContactChanged),
+    (req, res, next) => {
+        try {
+            const user = req.user!;
+            const body = (req.body || {}) as Record<string, unknown>;
+            const field = body.field;
+            const value = body.value;
+            if (field !== "email" && field !== "mobile")
+                return next(new BadRequestError("Invalid field"));
+            if (typeof value !== "string" || value.length === 0)
+                return next(new BadRequestError("Invalid value"));
+            if (field === "email") {
+                changeEmail({ users: container.repos.users }, { userId: user.id, email: value });
+            } else {
+                changeMobile({ users: container.repos.users }, { userId: user.id, mobile: value });
+            }
+            res.json({ success: true });
+        } catch (err) {
+            next(err instanceof Error ? new BadRequestError(err.message) : err);
         }
     }
 );

@@ -12,7 +12,20 @@ import { requireStepUp } from "../../../middleware/step-up";
 import { auditMiddleware } from "../../audit/interface/middleware";
 import { AuditActions } from "../../audit/domain/actions";
 import { executeTransfer } from "../application/executeTransfer";
+import { executeRailTransfer } from "../application/executeRailTransfer";
 import { faucetDeposit } from "../application/faucetDeposit";
+import { fileDispute, listDisputes, decideDispute } from "../application/disputes";
+import { getKycTier } from "../../identity/application/kycTier";
+import { previewLimits } from "../../../services/transferLimits";
+import {
+    approvePendingAction,
+    createPendingAction,
+    listPendingActions,
+    markPendingExecuted,
+    requiresMakerChecker,
+} from "../../../services/adminMakerChecker";
+import { isTransferAllowed } from "../../beneficiaries/domain/beneficiary";
+import { BeneficiaryCoolingPeriodError } from "../../beneficiaries/domain/errors";
 import { touchBeneficiaryByAccount } from "../../beneficiaries/application/manageBeneficiary";
 import {
     AccountNotActiveError,
@@ -22,10 +35,15 @@ import {
 } from "../../accounts/domain/errors";
 import {
     CrossUserFixedDepositTransferError,
+    TransferAggregateLimitError,
     TransferAmountInvalidError,
     TransferOverLimitError,
     TransferToSelfError,
 } from "../domain/errors";
+import {
+    InsufficientAvailableFundsError,
+    MinimumBalanceViolationError,
+} from "../../accounts/domain/errors";
 
 export const transferCustomerRouter = express.Router();
 export const transactionsAdminRouter = express.Router();
@@ -59,13 +77,17 @@ transferCustomerRouter.post(
         // beneficiaryId is an alternate addressing mode — resolve it to the
         // saved account number. Validates ownership before letting it stand
         // in for `toAccountNumber`.
+        let resolvedBeneficiaryId: string | undefined;
         if (typeof beneficiaryId === "string" && beneficiaryId.length > 0) {
             if (!isUuid(beneficiaryId))
                 return next(new BadRequestError("Invalid beneficiaryId"));
             const b = container.repos.beneficiaries.findById(beneficiaryId);
             if (!b || b.ownerUserId !== user.id)
                 return next(new NotFoundError("Beneficiary not found"));
+            if (!isTransferAllowed(b, container.clock.now()))
+                return next(new BeneficiaryCoolingPeriodError());
             toAccountNumber = b.accountNumber;
+            resolvedBeneficiaryId = b.id;
         }
 
         if (!isNonEmptyString(toAccountNumber, 32))
@@ -83,12 +105,14 @@ transferCustomerRouter.post(
         if (from.userId !== user.id)
             return next(new ForbiddenError("Source account does not belong to user"));
 
+        const kycTier = getKycTier({ users: container.repos.users }, user.id);
         const transfer = executeTransfer(
             {
                 db: container.db,
                 clock: container.clock,
                 ids: container.ids,
                 bus: container.bus,
+                beneficiaries: container.repos.beneficiaries,
             },
             {
                 fromAccountId,
@@ -97,6 +121,10 @@ transferCustomerRouter.post(
                 currency: "INR",
                 memo: typeof memo === "string" ? memo : undefined,
                 idempotencyKey: idempotencyKey as string | undefined,
+                beneficiaryId: resolvedBeneficiaryId,
+                ownerUserId: user.id,
+                kycTier,
+                rail: "internal",
             }
         );
 
@@ -116,6 +144,112 @@ transferCustomerRouter.post(
         res.json({ transfer: serialize(transfer) });
     } catch (err) {
         next(translate(err));
+    }
+});
+
+transferCustomerRouter.get("/limits", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const accounts = container.repos.accounts.listByUserId(user.id);
+        const kycTier = getKycTier({ users: container.repos.users }, user.id);
+        const preview = previewLimits(container.db, {
+            userId: user.id,
+            accountIds: accounts.map((a) => a.id),
+            kycTier,
+            now: container.clock.now(),
+        });
+        res.json({ limits: preview, kycTier });
+    } catch (err) {
+        next(err);
+    }
+});
+
+transferCustomerRouter.post(
+    "/rail",
+    requireStepUp("transfer"),
+    auditMiddleware(AuditActions.TransferRailExecuted),
+    (req, res, next) => {
+        try {
+            const user = req.user!;
+            const body = (req.body || {}) as Record<string, unknown>;
+            const fromAccountId = body.fromAccountId;
+            const toAccountNumber = body.toAccountNumber;
+            const amountMinor = body.amountMinor;
+            const rail = body.rail;
+            const vpa = body.vpa;
+            if (!isUuid(fromAccountId))
+                return next(new BadRequestError("Invalid fromAccountId"));
+            if (!isNonEmptyString(toAccountNumber, 32))
+                return next(new BadRequestError("Invalid toAccountNumber"));
+            if (
+                typeof amountMinor !== "number" ||
+                !Number.isInteger(amountMinor) ||
+                amountMinor <= 0
+            )
+                return next(new BadRequestError("Invalid amountMinor"));
+            if (rail !== "imps" && rail !== "neft" && rail !== "rtgs" && rail !== "upi")
+                return next(new BadRequestError("Invalid rail"));
+
+            const from = container.repos.accounts.findById(fromAccountId as string);
+            if (!from || from.userId !== user.id)
+                return next(new ForbiddenError("Source account does not belong to user"));
+
+            const kycTier = getKycTier({ users: container.repos.users }, user.id);
+            const transfer = executeRailTransfer(
+                {
+                    db: container.db,
+                    clock: container.clock,
+                    ids: container.ids,
+                    bus: container.bus,
+                },
+                {
+                    fromAccountId: fromAccountId as string,
+                    toAccountNumber: toAccountNumber as string,
+                    amountMinor,
+                    currency: "INR",
+                    rail,
+                    vpa: typeof vpa === "string" ? vpa : undefined,
+                    ownerUserId: user.id,
+                    kycTier,
+                }
+            );
+            res.json({ transfer: serialize(transfer) });
+        } catch (err) {
+            next(translate(err));
+        }
+    }
+);
+
+transferCustomerRouter.post("/disputes", auditMiddleware(AuditActions.DisputeFiled), (req, res, next) => {
+    try {
+        const user = req.user!;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const transferId = body.transferId;
+        const reason = body.reason;
+        if (!isUuid(transferId)) return next(new BadRequestError("Invalid transferId"));
+        if (!isNonEmptyString(reason, 512)) return next(new BadRequestError("Invalid reason"));
+        const d = fileDispute(
+            {
+                disputes: container.repos.disputes,
+                transfers: container.repos.transfers,
+                ids: container.ids,
+                clock: container.clock,
+            },
+            { userId: user.id, transferId: transferId as string, reason: reason as string }
+        );
+        res.status(201).json({ dispute: serializeDispute(d) });
+    } catch (err) {
+        next(err instanceof Error ? new BadRequestError(err.message) : err);
+    }
+});
+
+transferCustomerRouter.get("/disputes", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const list = listDisputes({ disputes: container.repos.disputes }, user.id);
+        res.json({ disputes: list.map(serializeDispute) });
+    } catch (err) {
+        next(err);
     }
 });
 
@@ -202,6 +336,7 @@ faucetAdminRouter.post(
         const amountMinor = body.amountMinor;
         const memo = body.memo;
         const idempotencyKey = body.idempotencyKey;
+        const skipMakerChecker = body.skipMakerChecker === true;
         if (!isUuid(toAccountId)) return next(new BadRequestError("Invalid toAccountId"));
         if (typeof amountMinor !== "number" || !Number.isInteger(amountMinor) || amountMinor <= 0)
             return next(new BadRequestError("Invalid amountMinor"));
@@ -209,6 +344,20 @@ faucetAdminRouter.post(
             return next(new BadRequestError("Invalid memo"));
         if (idempotencyKey !== undefined && !isNonEmptyString(idempotencyKey, 128))
             return next(new BadRequestError("Invalid idempotencyKey"));
+
+        const admin = req.user!;
+        if (requiresMakerChecker(amountMinor) && !skipMakerChecker) {
+            const pending = createPendingAction(
+                container.db,
+                { ids: container.ids, clock: container.clock },
+                {
+                    action: "admin.faucet",
+                    requestedByUserId: admin.id,
+                    payload: { toAccountId, amountMinor, memo, idempotencyKey },
+                }
+            );
+            return res.status(202).json({ pendingAction: pending });
+        }
 
         const transfer = faucetDeposit(
             {
@@ -231,6 +380,97 @@ faucetAdminRouter.post(
     }
 });
 
+transactionsAdminRouter.get("/disputes", (_req, res, next) => {
+    try {
+        const list = container.repos.disputes.listAll(200);
+        res.json({ disputes: list.map(serializeDispute) });
+    } catch (err) {
+        next(err);
+    }
+});
+
+transactionsAdminRouter.post("/disputes/:id/decide", (req, res, next) => {
+    try {
+        const admin = req.user!;
+        const { id } = req.params;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const approve = body.approve === true;
+        const adminNote = body.adminNote;
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        if (adminNote !== undefined && adminNote !== null && typeof adminNote !== "string")
+            return next(new BadRequestError("Invalid adminNote"));
+        const d = decideDispute(
+            {
+                db: container.db,
+                disputes: container.repos.disputes,
+                transfers: container.repos.transfers,
+                clock: container.clock,
+                ids: container.ids,
+                bus: container.bus,
+            },
+            {
+                disputeId: id,
+                adminUserId: admin.id,
+                approve,
+                adminNote: typeof adminNote === "string" ? adminNote : undefined,
+            }
+        );
+        res.json({ dispute: serializeDispute(d) });
+    } catch (err) {
+        next(err instanceof Error ? new BadRequestError(err.message) : err);
+    }
+});
+
+transactionsAdminRouter.get("/pending-actions", (_req, res, next) => {
+    try {
+        const list = listPendingActions(container.db);
+        res.json({ pendingActions: list });
+    } catch (err) {
+        next(err);
+    }
+});
+
+transactionsAdminRouter.post("/pending-actions/:id/approve", (req, res, next) => {
+    try {
+        const admin = req.user!;
+        const { id } = req.params;
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        const pending = approvePendingAction(container.db, { clock: container.clock }, {
+            id,
+            approvedByUserId: admin.id,
+        });
+        if (!pending) return next(new NotFoundError("Pending action not found"));
+        if (pending.action === "admin.faucet") {
+            const payload = JSON.parse(pending.payload) as {
+                toAccountId: string;
+                amountMinor: number;
+                memo?: string;
+                idempotencyKey?: string;
+            };
+            const transfer = faucetDeposit(
+                {
+                    db: container.db,
+                    clock: container.clock,
+                    ids: container.ids,
+                    bus: container.bus,
+                },
+                {
+                    toAccountId: payload.toAccountId,
+                    amountMinor: payload.amountMinor,
+                    currency: "INR",
+                    memo: payload.memo,
+                    idempotencyKey: payload.idempotencyKey,
+                }
+            );
+            markPendingExecuted(container.db, pending.id);
+            return res.json({ pendingAction: pending, transfer: serialize(transfer) });
+        }
+        res.json({ pendingAction: pending });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
 function serialize(t: ReturnType<typeof container.repos.transfers.findById>) {
     if (!t) return null;
     return {
@@ -243,6 +483,9 @@ function serialize(t: ReturnType<typeof container.repos.transfers.findById>) {
         memo: t.memo,
         kind: t.kind,
         status: t.status,
+        rail: t.rail,
+        utr: t.utr,
+        failureReason: t.failureReason,
         postedAt: t.postedAt.toISOString(),
         referenceNumber: t.referenceNumber,
         feeMinor: t.feeMinor,
@@ -268,16 +511,34 @@ function serializeLedger(e: ReturnType<typeof container.repos.ledger.listByAccou
     };
 }
 
+function serializeDispute(d: ReturnType<typeof container.repos.disputes.findById>) {
+    if (!d) return null;
+    return {
+        id: d.id,
+        transferId: d.transferId,
+        reason: d.reason,
+        status: d.status,
+        adminNote: d.adminNote,
+        reversalTransferId: d.reversalTransferId,
+        createdAt: d.createdAt.toISOString(),
+        decidedAt: d.decidedAt?.toISOString(),
+    };
+}
+
 function translate(err: unknown): unknown {
     if (err instanceof TransferAmountInvalidError) return new BadRequestError(err.message);
     if (err instanceof TransferOverLimitError) return new BadRequestError(err.message);
+    if (err instanceof TransferAggregateLimitError) return new ConflictError(err.message);
     if (err instanceof TransferToSelfError) return new BadRequestError(err.message);
     if (err instanceof CrossUserFixedDepositTransferError)
         return new ConflictError(err.message);
+    if (err instanceof BeneficiaryCoolingPeriodError) return new ConflictError(err.message);
     if (err instanceof AccountNotFoundError) return new NotFoundError(err.message);
     if (err instanceof AccountNotActiveError) return new ConflictError(err.message);
     if (err instanceof CurrencyMismatchError) return new BadRequestError(err.message);
     if (err instanceof InsufficientFundsError) return new ConflictError(err.message);
+    if (err instanceof InsufficientAvailableFundsError) return new ConflictError(err.message);
+    if (err instanceof MinimumBalanceViolationError) return new ConflictError(err.message);
     if (err instanceof HttpError) return err;
     return err;
 }

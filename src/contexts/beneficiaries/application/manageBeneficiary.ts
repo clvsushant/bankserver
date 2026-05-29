@@ -3,7 +3,12 @@ import type { IdGenerator } from "../../../shared/ids";
 import type { EventBus } from "../../../shared/eventBus";
 import type { AccountRepo } from "../../accounts/application/ports";
 import type { UserRepo } from "../../identity/application/ports";
-import { createBeneficiary, type Beneficiary } from "../domain/beneficiary";
+import {
+    BENEFICIARY_COOLING_MS,
+    createBeneficiary,
+    renameBeneficiaryNickname,
+    type Beneficiary,
+} from "../domain/beneficiary";
 import {
     BeneficiaryAlreadyExistsError,
     BeneficiaryNotFoundError,
@@ -13,6 +18,7 @@ import {
 import type {
     BeneficiaryAddedEvent,
     BeneficiaryRemovedEvent,
+    BeneficiaryRenamedEvent,
 } from "../domain/events";
 import type { BeneficiaryRepo } from "./ports";
 
@@ -35,13 +41,17 @@ export function addBeneficiary(
     if (existing) throw new BeneficiaryAlreadyExistsError();
 
     const counterparty = deps.users.findById(target.userId);
+    const now = deps.clock.now();
+    const activatedAt = new Date(now.getTime() + BENEFICIARY_COOLING_MS);
     const beneficiary = createBeneficiary({
         id: deps.ids.uuid(),
         ownerUserId: args.ownerUserId,
         nickname: args.nickname,
         accountNumber: args.accountNumber,
         beneficiaryUsername: counterparty?.username,
-        createdAt: deps.clock.now(),
+        status: "pending",
+        activatedAt,
+        createdAt: now,
     });
     deps.repo.insert(beneficiary);
 
@@ -57,6 +67,29 @@ export function addBeneficiary(
         deps.bus.publish([event]);
     }
     return beneficiary;
+}
+
+export function renameBeneficiary(
+    deps: { repo: BeneficiaryRepo; bus?: EventBus; clock: Clock },
+    args: { ownerUserId: string; beneficiaryId: string; nickname: string }
+): Beneficiary {
+    const b = deps.repo.findById(args.beneficiaryId);
+    if (!b || b.ownerUserId !== args.ownerUserId) throw new BeneficiaryNotFoundError();
+    const updated = renameBeneficiaryNickname(b, args.nickname);
+    deps.repo.update(updated);
+
+    if (deps.bus) {
+        const event: BeneficiaryRenamedEvent = {
+            type: "BeneficiaryRenamed",
+            beneficiaryId: updated.id,
+            ownerUserId: updated.ownerUserId,
+            oldNickname: b.nickname,
+            newNickname: updated.nickname,
+            renamedAt: deps.clock.now(),
+        };
+        deps.bus.publish([event]);
+    }
+    return updated;
 }
 
 export function removeBeneficiary(

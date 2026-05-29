@@ -9,7 +9,7 @@ import { freezeAccount } from "../contexts/accounts/application/freezeAccount";
 import {
     AccountNotActiveError,
     AccountNotFoundError,
-    InsufficientFundsError,
+    InsufficientAvailableFundsError,
 } from "../contexts/accounts/domain/errors";
 import {
     CrossUserFixedDepositTransferError,
@@ -18,6 +18,11 @@ import {
     TransferToSelfError,
 } from "../contexts/payments/domain/errors";
 import { openAdditionalAccount } from "../contexts/accounts/application/createAccount";
+
+/** Savings min balance is 50_000 paise; fund above that for debit tests. */
+const SAVINGS_FUND = 100_000;
+/** Current min balance is 1_000_000 paise. */
+const CURRENT_FUND = 2_000_000;
 
 function bootstrap() {
     const env = makeTestEnv();
@@ -45,7 +50,7 @@ test("happy path: faucet -> transfer posts a debit + credit and updates balances
 
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aAcc.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aAcc.id, amountMinor: SAVINGS_FUND, currency: "INR" }
     );
 
     const t = executeTransfer(
@@ -62,7 +67,7 @@ test("happy path: faucet -> transfer posts a debit + credit and updates balances
 
     const a = env.repos.accounts.findById(aAcc.id)!;
     const b = env.repos.accounts.findById(bAcc.id)!;
-    assert.equal(a.balanceMinor, 70_00);
+    assert.equal(a.balanceMinor, SAVINGS_FUND - 30_00);
     assert.equal(b.balanceMinor, 30_00);
 
     // Double-entry invariant: sum of all ledger entries (with signed kinds) is zero
@@ -72,8 +77,7 @@ test("happy path: faucet -> transfer posts a debit + credit and updates balances
         (s, e) => s + (e.kind === "debit" ? -e.amountMinor : e.amountMinor),
         0
     );
-    // Faucet adds 10000 (credit only), transfer balances out. Net = +10000.
-    assert.equal(sum, 100_00);
+    assert.equal(sum, SAVINGS_FUND);
 });
 
 test("insufficient funds throws and rolls back", () => {
@@ -89,7 +93,7 @@ test("insufficient funds throws and rolls back", () => {
                     currency: "INR",
                 }
             ),
-        (e) => e instanceof InsufficientFundsError
+        (e) => e instanceof InsufficientAvailableFundsError
     );
     assert.equal(env.repos.accounts.findById(aAcc.id)!.balanceMinor, 0);
     assert.equal(env.repos.accounts.findById(bAcc.id)!.balanceMinor, 0);
@@ -100,7 +104,7 @@ test("idempotency key returns the same transfer without re-applying", () => {
     const { env, aAcc, bAcc } = bootstrap();
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aAcc.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aAcc.id, amountMinor: SAVINGS_FUND, currency: "INR" }
     );
 
     const args = {
@@ -119,7 +123,7 @@ test("idempotency key returns the same transfer without re-applying", () => {
         args
     );
     assert.equal(t1.id, t2.id);
-    assert.equal(env.repos.accounts.findById(aAcc.id)!.balanceMinor, 75_00);
+    assert.equal(env.repos.accounts.findById(aAcc.id)!.balanceMinor, SAVINGS_FUND - 25_00);
     assert.equal(env.repos.accounts.findById(bAcc.id)!.balanceMinor, 25_00);
 });
 
@@ -292,7 +296,7 @@ test("self transfer into own fixed_deposit is allowed (savings -> FD)", () => {
     );
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aAcc.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aAcc.id, amountMinor: SAVINGS_FUND, currency: "INR" }
     );
 
     const t = executeTransfer(
@@ -307,7 +311,7 @@ test("self transfer into own fixed_deposit is allowed (savings -> FD)", () => {
     );
     assert.equal(t.status, "posted");
     assert.equal(t.category, "self");
-    assert.equal(env.repos.accounts.findById(aAcc.id)!.balanceMinor, 60_00);
+    assert.equal(env.repos.accounts.findById(aAcc.id)!.balanceMinor, SAVINGS_FUND - 40_00);
     assert.equal(env.repos.accounts.findById(aliceFd.id)!.balanceMinor, 40_00);
 });
 
@@ -323,7 +327,7 @@ test("self transfer into own fixed_deposit is allowed (current -> FD)", () => {
     );
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aliceCurrent.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aliceCurrent.id, amountMinor: CURRENT_FUND, currency: "INR" }
     );
 
     const t = executeTransfer(
@@ -337,7 +341,7 @@ test("self transfer into own fixed_deposit is allowed (current -> FD)", () => {
     );
     assert.equal(t.status, "posted");
     assert.equal(t.category, "self");
-    assert.equal(env.repos.accounts.findById(aliceCurrent.id)!.balanceMinor, 75_00);
+    assert.equal(env.repos.accounts.findById(aliceCurrent.id)!.balanceMinor, CURRENT_FUND - 25_00);
     assert.equal(env.repos.accounts.findById(aliceFd.id)!.balanceMinor, 25_00);
 });
 
@@ -352,7 +356,7 @@ test("cross-user transfer into a non-FD account is still allowed (current -> sav
     );
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aliceCurrent.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aliceCurrent.id, amountMinor: CURRENT_FUND, currency: "INR" }
     );
 
     const t = executeTransfer(
@@ -366,7 +370,7 @@ test("cross-user transfer into a non-FD account is still allowed (current -> sav
     );
     assert.equal(t.status, "posted");
     assert.equal(t.category, "p2p");
-    assert.equal(env.repos.accounts.findById(aliceCurrent.id)!.balanceMinor, 70_00);
+    assert.equal(env.repos.accounts.findById(aliceCurrent.id)!.balanceMinor, CURRENT_FUND - 30_00);
     assert.equal(env.repos.accounts.findById(bAcc.id)!.balanceMinor, 30_00);
     void bob;
 });
@@ -375,7 +379,7 @@ test("MoneyMoved event is emitted only after a successful commit", () => {
     const { env, aAcc, bAcc } = bootstrap();
     faucetDeposit(
         { db: env.db, clock: env.clock, ids: env.ids, bus: env.bus },
-        { toAccountId: aAcc.id, amountMinor: 100_00, currency: "INR" }
+        { toAccountId: aAcc.id, amountMinor: SAVINGS_FUND, currency: "INR" }
     );
 
     const events: string[] = [];

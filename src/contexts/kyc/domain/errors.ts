@@ -21,3 +21,9 @@ export class KycInvalidPanError extends Error {
         super("Invalid PAN format");
     }
 }
+
+export class KycBankingAccessDeniedError extends Error {
+    constructor(message = "Banking access requires approved KYC and an active account") {
+        super(message);
+    }
+}

@@ -42,7 +42,7 @@ test("KycApproved event triggers account creation via the bus", () => {
     assert.equal(app.status, "Submitted");
 
     const approved = approveKyc(
-        { repo: env.repos.kyc, clock: env.clock, bus: env.bus },
+        { repo: env.repos.kyc, users: env.repos.users, clock: env.clock, bus: env.bus },
         { applicationId: app.id, adminUserId: admin.id }
     );
     assert.equal(approved.status, "Approved");
@@ -145,7 +145,7 @@ test("KYC submit + approve flow writes audit rows when wired to the bus", () => 
         }
     );
     approveKyc(
-        { repo: env.repos.kyc, clock: env.clock, bus: env.bus },
+        { repo: env.repos.kyc, users: env.repos.users, clock: env.clock, bus: env.bus },
         { applicationId: app.id, adminUserId: admin.id }
     );
 

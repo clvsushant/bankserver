@@ -7,16 +7,24 @@ import { makeAccountRepo } from "../../accounts/infrastructure/accountRepo";
 import { makeTransferRepo } from "../infrastructure/transferRepo";
 import { makeLedgerRepo } from "../infrastructure/ledgerRepo";
 import { makeUserRepo } from "../../identity/infrastructure/userRepo";
+import { makeBeneficiaryRepo } from "../../beneficiaries/infrastructure/beneficiaryRepo";
+import { makeKycRepo } from "../../kyc/infrastructure/kycRepo";
+import { assertBankingAccess } from "../../kyc/application/bankingAccess";
 import { credit, debit } from "../../accounts/domain/account";
 import { AccountNotFoundError } from "../../accounts/domain/errors";
+import { isTransferAllowed } from "../../beneficiaries/domain/beneficiary";
+import { BeneficiaryCoolingPeriodError } from "../../beneficiaries/domain/errors";
 import {
     CrossUserFixedDepositTransferError,
+    TransferAggregateLimitError,
     TransferAmountInvalidError,
     TransferOverLimitError,
     TransferToSelfError,
 } from "../domain/errors";
-import type { Transfer } from "../domain/transfer";
+import type { Transfer, TransferRail } from "../domain/transfer";
 import type { MoneyMovedEvent } from "../domain/events";
+import { checkAggregateLimits, type KycTier } from "../../../services/transferLimits";
+import type { BeneficiaryRepo } from "../../beneficiaries/application/ports";
 
 const PER_TRANSACTION_MAX_MINOR = 1_000_000_00; // ₹10,00,000 (10 lakh)
 
@@ -27,24 +35,20 @@ export interface ExecuteTransferInput {
     currency: Currency;
     memo?: string;
     idempotencyKey?: string;
+    beneficiaryId?: string;
+    ownerUserId?: string;
+    kycTier?: KycTier;
+    rail?: TransferRail;
 }
 
-/**
- * Posts a transfer atomically:
- *
- *   - validates inputs and looks up both accounts
- *   - debits source, credits target via the Account aggregate
- *   - inserts ONE transfers row + TWO ledger_entries rows
- *   - updates both account balances
- *
- * All inside a SQL transaction. On any error the SQL transaction is rolled
- * back and the use case throws.
- *
- * Idempotency: if `idempotencyKey` is supplied AND a previous transfer with
- * the same key exists, the existing transfer is returned without effects.
- */
 export function executeTransfer(
-    deps: { db: Db; clock: Clock; ids: IdGenerator; bus: EventBus },
+    deps: {
+        db: Db;
+        clock: Clock;
+        ids: IdGenerator;
+        bus: EventBus;
+        beneficiaries?: BeneficiaryRepo;
+    },
     input: ExecuteTransferInput
 ): Transfer {
     if (input.amountMinor <= 0 || !Number.isInteger(input.amountMinor))
@@ -52,16 +56,29 @@ export function executeTransfer(
     if (input.amountMinor > PER_TRANSACTION_MAX_MINOR)
         throw new TransferOverLimitError(PER_TRANSACTION_MAX_MINOR);
 
+    if (input.ownerUserId) {
+        assertBankingAccess(
+            {
+                kyc: makeKycRepo(deps.db),
+                accounts: makeAccountRepo(deps.db),
+            },
+            input.ownerUserId
+        );
+    }
+    if (input.kycTier === "none") {
+        throw new TransferAggregateLimitError("KYC verification required before transfers");
+    }
+
     const events: MoneyMovedEvent[] = [];
+    const rail: TransferRail = input.rail ?? "internal";
 
     const transfer = deps.db.transaction((tx): Transfer => {
-        // Drizzle's tx and db have identical query APIs but different TS
-        // types. Cast lets repos take the top-level Db type.
         const txDb = tx as unknown as Db;
         const accountRepo = makeAccountRepo(txDb);
         const transferRepo = makeTransferRepo(txDb);
         const ledgerRepo = makeLedgerRepo(txDb);
         const userRepo = makeUserRepo(txDb);
+        const beneficiaryRepo = deps.beneficiaries ?? makeBeneficiaryRepo(txDb);
 
         if (input.idempotencyKey) {
             const prior = transferRepo.findByIdempotencyKey(input.idempotencyKey);
@@ -74,20 +91,35 @@ export function executeTransfer(
         if (!to) throw new AccountNotFoundError();
         if (from.id === to.id) throw new TransferToSelfError();
 
-        // Funding a Fixed Deposit is restricted to self transfers. Regardless
-        // of the source account type (savings or current), pushing money into
-        // someone else's FD is disallowed; you may still fund your own FD
-        // from any of your own accounts.
         if (to.accountType === "fixed_deposit" && from.userId !== to.userId) {
             throw new CrossUserFixedDepositTransferError();
         }
 
         const now = deps.clock.now();
+
+        if (input.beneficiaryId && input.ownerUserId) {
+            const b = beneficiaryRepo.findById(input.beneficiaryId);
+            if (!b || b.ownerUserId !== input.ownerUserId)
+                throw new BeneficiaryCoolingPeriodError();
+            if (!isTransferAllowed(b, now)) throw new BeneficiaryCoolingPeriodError();
+        }
+
+        if (input.ownerUserId && input.kycTier) {
+            const myAccounts = accountRepo.listByUserId(input.ownerUserId);
+            const limitCheck = checkAggregateLimits(txDb, {
+                userId: input.ownerUserId,
+                accountIds: myAccounts.map((a) => a.id),
+                amountMinor: input.amountMinor,
+                kycTier: input.kycTier,
+                now,
+            });
+            if (!limitCheck.allowed)
+                throw new TransferAggregateLimitError(limitCheck.reason ?? "Transfer limit exceeded");
+        }
+
         const debited = debit(from, input.amountMinor, input.currency, now);
         const credited = credit(to, input.amountMinor, input.currency, now);
 
-        // Snapshot counterparty info inline so the receipt is point-in-time
-        // consistent even if usernames or account numbers change later.
         const fromUser = userRepo.findById(from.userId);
         const toUser = userRepo.findById(to.userId);
         const category = from.userId === to.userId ? "self" : "p2p";
@@ -106,6 +138,7 @@ export function executeTransfer(
             memo: input.memo,
             kind: "transfer",
             status: "posted",
+            rail,
             postedAt: now,
             referenceNumber: deps.ids.transactionReference(),
             feeMinor: 0,

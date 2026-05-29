@@ -26,6 +26,7 @@ import auditAdminRouter from "../contexts/audit/interface/admin";
 import { decryptMiddleware } from "../middleware/decrypt";
 import { encryptedResponse } from "../middleware/encrypt";
 import { requireSession, requireRole } from "../middleware/auth";
+import { requireBankingAccess } from "../middleware/banking-access";
 
 const router = express.Router();
 
@@ -68,6 +69,7 @@ router.use(
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     statementsRouter
 );
 
@@ -76,6 +78,7 @@ router.use(
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     beneficiariesRouter
 );
 
@@ -84,6 +87,7 @@ router.use(
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     billsRouter
 );
 
@@ -92,6 +96,7 @@ router.use(
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     standingInstructionsRouter
 );
 
@@ -108,17 +113,18 @@ router.use(
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     cardsRouter
 );
 
-// /transfer mount: encrypted + authenticated. Step-up (action token) is
-// applied only to the POST inside the router so GET /transfer/recent
-// (read-only listing) doesn't require a fresh WebAuthn gesture.
+// /transfer mount: encrypted + authenticated + banking access. Step-up
+// (action token) is applied only to POST handlers inside the router.
 router.use(
     "/transfer",
     encryptedResponse,
     decryptMiddleware,
     requireSession,
+    requireBankingAccess,
     transferCustomerRouter
 );
 

@@ -5,19 +5,26 @@
   "license": "ISC",
   "type": "commonjs",
   "main": "src/main.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "test": "TS_NODE_TRANSPILE_ONLY=true node --require ts-node/register --test src/__tests__/*.test.ts",
+    "test": "TS_NODE_TRANSPILE_ONLY=true ./scripts/node --require ts-node/register --test src/__tests__/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "dev": "ts-node src/main.ts",
-    "build": "tsc && mkdir -p dist/api-docs && cp -R src/api-docs/. dist/api-docs/",
-    "start": "node dist/main.js",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "ts-node src/db/migrate.ts",
-    "db:seed": "ts-node src/db/seed.ts",
-    "db:seed:test-customers": "ts-node src/db/seedTestCustomers.ts",
+    "dev": "./scripts/node --env-file=.env --require ts-node/register src/main.ts",
+    "build": "tsc && mkdir -p dist/api-docs && cp -R dist/api-docs/. dist/api-docs/",
+    "start": "./scripts/node --env-file=.env.production dist/main.js",
+    "start:prod": "npm run build && npm run db:migrate:prod && npm run start",
+    "db:generate": "./scripts/node --env-file=.env ./node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "./scripts/node --env-file=.env --require ts-node/register src/db/migrate.ts",
+    "db:migrate:prod": "./scripts/node --env-file=.env.production --require ts-node/register src/db/migrateProd.ts",
+    "db:seed": "./scripts/node --env-file=.env --require ts-node/register src/db/seed.ts",
+    "db:seed:test-customers": "./scripts/node --env-file=.env --require ts-node/register src/db/seedTestCustomers.ts",
     "db:reset": "rm -f bankserver.sqlite && npm run db:migrate && npm run db:seed",
     "format": "prettier --write \"src/**/*.{ts,js}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js}\""
+    "format:check": "prettier --check \"src/**/*.{ts,js}\"",
+    "rebuild:native": "./scripts/node ./node_modules/node-gyp/bin/node-gyp.js rebuild -C node_modules/better-sqlite3",
+    "postinstall": "npm run rebuild:native"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.0",
@@ -32,6 +39,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.7.0",
     "drizzle-kit": "^0.28.0",
+    "node-gyp": "^11.5.0",
     "prettier": "^3.8.3",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"

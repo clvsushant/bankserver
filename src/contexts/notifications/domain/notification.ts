@@ -7,7 +7,8 @@ export type NotificationKind =
     | "password.changed"
     | "passkey.revoked"
     | "card.frozen"
-    | "card.issued";
+    | "card.issued"
+    | "card.spent";
 
 export interface Notification {
     readonly id: string;
