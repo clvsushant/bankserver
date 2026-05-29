@@ -17,6 +17,7 @@ import {
     setCardLimits,
     unfreezeCard,
 } from "../application/manageCards";
+import { CardNotFoundError } from "../domain/errors";
 import { simulateCardSpend } from "../application/simulateCardSpend";
 import { previewCardLimits } from "../../../services/cardLimits";
 import { getKycTier } from "../../identity/application/kycTier";

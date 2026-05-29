@@ -159,6 +159,17 @@ CREATE TABLE IF NOT EXISTS billers (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS billers_acc_uq ON billers (biller_account_number);
 
+CREATE TABLE IF NOT EXISTS saved_bill_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    biller_id TEXT NOT NULL REFERENCES billers(id) ON DELETE CASCADE,
+    customer_ref TEXT NOT NULL,
+    nickname TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS saved_bill_accounts_by_user ON saved_bill_accounts (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS saved_bill_accounts_user_biller_ref_uq ON saved_bill_accounts (user_id, biller_id, customer_ref);
+
 CREATE TABLE IF NOT EXISTS standing_instructions (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -468,6 +479,16 @@ const upgrades: Array<{ table: string; column: string; ddl: string }> = [
         table: "transfers",
         column: "card_id",
         ddl: "ALTER TABLE transfers ADD COLUMN card_id TEXT REFERENCES debit_cards(id)",
+    },
+    {
+        table: "standing_instructions",
+        column: "end_at",
+        ddl: "ALTER TABLE standing_instructions ADD COLUMN end_at INTEGER",
+    },
+    {
+        table: "standing_instructions",
+        column: "failure_count",
+        ddl: "ALTER TABLE standing_instructions ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0",
     },
 ];
 

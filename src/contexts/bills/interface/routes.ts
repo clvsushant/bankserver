@@ -12,6 +12,11 @@ import { requireStepUp } from "../../../middleware/step-up";
 import { auditMiddleware } from "../../audit/interface/middleware";
 import { AuditActions } from "../../audit/domain/actions";
 import { payBill } from "../application/payBill";
+import {
+    listSavedBillAccounts,
+    removeSavedBillAccount,
+    saveBillAccount,
+} from "../application/savedBillAccounts";
 import { composeDomainErrorTranslation, translateBillDomainError } from "../../../shared/domainErrorTranslate";
 
 export const billsRouter = express.Router();
@@ -30,6 +35,76 @@ billsRouter.get("/billers", (_req, res, next) => {
         });
     } catch (err) {
         next(err);
+    }
+});
+
+billsRouter.get("/saved", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const list = listSavedBillAccounts({ saved: container.repos.savedBillAccounts }, user.id);
+        res.json({
+            savedAccounts: list.map((s) => ({
+                id: s.id,
+                billerId: s.billerId,
+                customerRef: s.customerRef,
+                nickname: s.nickname,
+                createdAt: s.createdAt.toISOString(),
+            })),
+        });
+    } catch (err) {
+        next(err);
+    }
+});
+
+billsRouter.post("/saved", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const body = (req.body || {}) as Record<string, unknown>;
+        const billerId = body.billerId;
+        const customerRef = body.customerRef;
+        const nickname = body.nickname;
+        if (!isUuid(billerId)) return next(new BadRequestError("Invalid billerId"));
+        if (!isNonEmptyString(customerRef, 64))
+            return next(new BadRequestError("Invalid customerRef"));
+        if (!isNonEmptyString(nickname, 64))
+            return next(new BadRequestError("Invalid nickname"));
+        const saved = saveBillAccount(
+            {
+                saved: container.repos.savedBillAccounts,
+                billers: container.repos.billers,
+                ids: container.ids,
+                clock: container.clock,
+            },
+            {
+                userId: user.id,
+                billerId: billerId as string,
+                customerRef: customerRef as string,
+                nickname: nickname as string,
+            }
+        );
+        res.status(201).json({
+            savedAccount: {
+                id: saved.id,
+                billerId: saved.billerId,
+                customerRef: saved.customerRef,
+                nickname: saved.nickname,
+                createdAt: saved.createdAt.toISOString(),
+            },
+        });
+    } catch (err) {
+        next(translate(err));
+    }
+});
+
+billsRouter.post("/saved/:id/remove", (req, res, next) => {
+    try {
+        const user = req.user!;
+        const { id } = req.params;
+        if (!isUuid(id)) return next(new BadRequestError("Invalid id"));
+        removeSavedBillAccount({ saved: container.repos.savedBillAccounts }, { userId: user.id, id });
+        res.json({ ok: true });
+    } catch (err) {
+        next(translate(err));
     }
 });
 

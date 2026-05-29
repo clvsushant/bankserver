@@ -134,15 +134,18 @@ export function checkAggregateLimits(
     };
 }
 
+export const PER_TRANSACTION_MAX_MINOR = 1_000_000_00; // ₹10,00,000 (10 lakh)
+
 export function previewLimits(
     db: Db,
     args: { userId: string; accountIds: string[]; kycTier: KycTier; now: Date }
-): Omit<TransferLimitCheck, "allowed" | "reason"> {
+): Omit<TransferLimitCheck, "allowed" | "reason"> & { perTransactionMaxMinor: number } {
     const check = checkAggregateLimits(db, { ...args, amountMinor: 0 });
     return {
         dailyUsedMinor: check.dailyUsedMinor,
         dailyLimitMinor: check.dailyLimitMinor,
         monthlyUsedMinor: check.monthlyUsedMinor,
         monthlyLimitMinor: check.monthlyLimitMinor,
+        perTransactionMaxMinor: PER_TRANSACTION_MAX_MINOR,
     };
 }

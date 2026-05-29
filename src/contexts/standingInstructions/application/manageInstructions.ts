@@ -36,6 +36,7 @@ export interface CreateInstructionInput {
     description?: string;
     /** Optional first-run timestamp; defaults to "now + 1 frequency tick". */
     startAt?: Date;
+    endAt?: Date;
 }
 
 export function createStandingInstruction(
@@ -76,6 +77,7 @@ export function createStandingInstruction(
         frequency: input.frequency,
         description: input.description,
         startAt,
+        endAt: input.endAt,
         createdAt: now,
     });
     deps.repo.insert(si);

@@ -8,7 +8,10 @@ export type NotificationKind =
     | "passkey.revoked"
     | "card.frozen"
     | "card.issued"
-    | "card.spent";
+    | "card.spent"
+    | "dispute.filed"
+    | "dispute.decided"
+    | "standing.failed";
 
 export interface Notification {
     readonly id: string;

@@ -26,6 +26,7 @@ import { makeBeneficiaryRepo } from "./contexts/beneficiaries/infrastructure/ben
 import { makeExternalBeneficiaryRepo } from "./contexts/beneficiaries/infrastructure/externalBeneficiaryRepo";
 import { makeDisputeRepo } from "./contexts/payments/infrastructure/disputeRepo";
 import { makeBillerRepo } from "./contexts/bills/infrastructure/billerRepo";
+import { makeSavedBillAccountRepo } from "./contexts/bills/infrastructure/savedBillAccountRepo";
 import { makeStandingInstructionRepo } from "./contexts/standingInstructions/infrastructure/standingInstructionRepo";
 import { makeNotificationRepo } from "./contexts/notifications/infrastructure/notificationRepo";
 import { makeDebitCardRepo } from "./contexts/cards/infrastructure/debitCardRepo";
@@ -63,6 +64,7 @@ export const container = {
         beneficiaries: makeBeneficiaryRepo(db),
         externalBeneficiaries: makeExternalBeneficiaryRepo(db),
         billers: makeBillerRepo(db),
+        savedBillAccounts: makeSavedBillAccountRepo(db),
         standingInstructions: makeStandingInstructionRepo(db),
         notifications: makeNotificationRepo(db),
         cards: makeDebitCardRepo(db),

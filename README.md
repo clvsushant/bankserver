@@ -11,7 +11,7 @@ contexts with a SQLite + Drizzle persistence layer.
 > AES key).
 
 The encryption protocol is documented in the bundled OpenAPI spec at
-`/api-docs/swagger-ui` (see **Cryptographic envelope** in the spec intro).
+`/api-docs` (Swagger UI; see the spec intro for encryption and envelopes).
 This README covers the banking layer on top of that channel — architecture,
 tables, routes, dev workflow, and gotchas.
 
@@ -54,7 +54,7 @@ That gives you:
 | Listen URL | `http://localhost:4000` |
 | Admin login | username `Admin`, password `Admin@123` (passkey enrolled on first login) |
 | Test customers | username `test_<N>`, password `Test<N>@Pass123` for `N = 1 .. 100` |
-| API docs | `http://localhost:4000/api-docs/swagger-ui` (or `/redoc`, or raw `/swagger.yaml`) |
+| API docs | `http://localhost:4000/api-docs` |
 
 Pair it with the companion **bankwebui** SPA on `:5174` for the full UI.
 
@@ -69,7 +69,7 @@ Pair it with the companion **bankwebui** SPA on `:5174` for the full UI.
 │   ├── express.json (64 KB body cap)                             │
 │   ├── CORS + res.on("finish") request log                       │
 │   ├── /security/*       — public, plaintext (handshake itself)  │
-│   ├── /api-docs/*       — public, plaintext (Swagger UI/Redoc)  │
+│   ├── /api-docs         — public Swagger UI (swagger-ui-express)  │
 │   ├── /dev/*            — dev-only login bypass (NODE_ENV≠prod) │
 │   ├── /identity/*       — encrypt + decrypt + (per-route auth)  │
 │   ├── /webauthn/*       — encrypt + decrypt                     │
@@ -134,8 +134,7 @@ bankserver/
     ├── app.ts                      Express setup + central error handler
     ├── container.ts                composition root + event subscribers
     ├── api-docs/
-    │   ├── swagger.yaml            full OpenAPI 3.1 spec (encrypted-envelope aware)
-    │   └── docs.html               static interactive docs
+    │   └── swagger.yaml            full OpenAPI 3.1 spec (handler-level JSON)
     ├── crypto/
     │   ├── aes.ts                  AES-256-GCM with sessionId AAD
     │   ├── ecdh.ts                 P-256 keygen + HKDF derive
@@ -161,7 +160,7 @@ bankserver/
     │   ├── index.ts                router wiring (top-level URL prefixes)
     │   ├── security.ts             /security/session, /security/handshake
     │   ├── webauthn.ts             registration + authentication options/verify
-    │   ├── api-docs.ts             /api-docs/swagger.yaml + viewers
+    │   ├── api-docs.ts             GET /api-docs (swagger-ui-express)
     │   └── dev.ts                  /dev/login-as (dev-only)
     ├── services/
     │   ├── actionTokens.ts         HMAC + jti + paramsHash + 60s expiry
@@ -343,20 +342,11 @@ publicly (no session, no encryption) from the running server:
 
 | URL | What it serves |
 | --- | --- |
-| `GET /api-docs/swagger.yaml` | Raw spec |
-| `GET /api-docs/swagger-ui` | Swagger UI (interactive, server-rendered HTML wrapper, schemas hidden by default) |
-| `GET /api-docs/redoc` | Redoc renderer |
-| `GET /api-docs/docs.html` | Pre-built static doc |
-| `GET /api-docs/` | Landing page linking to the above |
+| `GET /api-docs` | Swagger UI (`swagger-ui-express`, spec from `src/api-docs/swagger.yaml`) |
 
-The spec captures both the wire envelope **and** the decrypted body via
-`x-decrypted-request` / `x-decrypted-response` extensions, plus per-flow
-ordering metadata (`x-call-order`, `x-depends-on`).
+Each operation shows **handler-level JSON** (`SignupInput`, etc.). The spec intro and `components/schemas` (`EnvelopedRequest`, `EnvelopedResponse`, `DecryptedEnvelope`) document production encryption, `sessionId`, `nonce`, and `timestamp`. Models are hidden in the UI. `/security/*` and `/dev/*` are plaintext on the wire.
 
-When accessed via the bankwebui's Vite proxy at
-`http://localhost:5174/api/api-docs/swagger-ui`, the rendered HTML's
-`<base href>` is computed from the `X-Forwarded-Prefix: /api` header so
-relative `swagger.yaml` references resolve correctly.
+Via bankwebui: `http://localhost:5174/api/api-docs` (Vite proxy strips `/api` and forwards to bankserver).
 
 ## Configuration
 
@@ -377,7 +367,7 @@ relative `swagger.yaml` references resolve correctly.
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | `ts-node src/main.ts` (no transpile, no watch — restart on edit) |
-| `npm run build` | `tsc` → `dist/`; also copies `src/api-docs/` so Swagger docs ship |
+| `npm run build` | `tsc` → `dist/`; copies `src/api-docs/swagger.yaml` into `dist/api-docs/` |
 | `npm start` | `node dist/main.js` |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | `node --test` over `src/__tests__/*.test.ts` (145 subtests across 33 files, ~14 s) |

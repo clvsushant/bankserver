@@ -28,6 +28,7 @@ import { BeneficiaryCoolingPeriodError } from "../../beneficiaries/domain/errors
 import { isTransferAllowed } from "../../beneficiaries/domain/beneficiary";
 import { touchBeneficiaryByAccount } from "../../beneficiaries/application/manageBeneficiary";
 import { composeDomainErrorTranslation, translateDisputePlainError } from "../../../shared/domainErrorTranslate";
+import { emitNotification } from "../../notifications/application/createNotification";
 
 export const transferCustomerRouter = express.Router();
 export const transactionsAdminRouter = express.Router();
@@ -161,6 +162,9 @@ transferCustomerRouter.post(
             const amountMinor = body.amountMinor;
             const rail = body.rail;
             const vpa = body.vpa;
+            const memo = body.memo;
+            const idempotencyKey = body.idempotencyKey;
+            const ifsc = body.ifsc;
             if (!isUuid(fromAccountId))
                 return next(new BadRequestError("Invalid fromAccountId"));
             if (!isNonEmptyString(toAccountNumber, 32))
@@ -173,6 +177,14 @@ transferCustomerRouter.post(
                 return next(new BadRequestError("Invalid amountMinor"));
             if (rail !== "imps" && rail !== "neft" && rail !== "rtgs" && rail !== "upi")
                 return next(new BadRequestError("Invalid rail"));
+            if (memo !== undefined && memo !== null && (typeof memo !== "string" || memo.length > 256))
+                return next(new BadRequestError("Invalid memo"));
+            if (idempotencyKey !== undefined && !isNonEmptyString(idempotencyKey, 128))
+                return next(new BadRequestError("Invalid idempotencyKey"));
+            if (ifsc !== undefined && ifsc !== null) {
+                if (typeof ifsc !== "string" || !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc.toUpperCase()))
+                    return next(new BadRequestError("Invalid ifsc"));
+            }
 
             const from = container.repos.accounts.findById(fromAccountId as string);
             if (!from || from.userId !== user.id)
@@ -192,7 +204,10 @@ transferCustomerRouter.post(
                     amountMinor,
                     currency: "INR",
                     rail,
+                    memo: typeof memo === "string" ? memo : undefined,
+                    idempotencyKey: idempotencyKey as string | undefined,
                     vpa: typeof vpa === "string" ? vpa : undefined,
+                    ifsc: typeof ifsc === "string" ? ifsc.toUpperCase() : undefined,
                     ownerUserId: user.id,
                     kycTier,
                 }
@@ -216,10 +231,26 @@ transferCustomerRouter.post("/disputes", auditMiddleware(AuditActions.DisputeFil
             {
                 disputes: container.repos.disputes,
                 transfers: container.repos.transfers,
+                accounts: container.repos.accounts,
                 ids: container.ids,
                 clock: container.clock,
             },
             { userId: user.id, transferId: transferId as string, reason: reason as string }
+        );
+        emitNotification(
+            {
+                repo: container.repos.notifications,
+                ids: container.ids,
+                clock: container.clock,
+            },
+            {
+                userId: user.id,
+                kind: "dispute.filed",
+                title: "Dispute submitted",
+                body: `We received your dispute for transfer ${transferId.slice(0, 8)}…`,
+                relatedEntityType: "dispute",
+                relatedEntityId: d.id,
+            }
         );
         res.status(201).json({ dispute: serializeDispute(d) });
     } catch (err) {
@@ -313,6 +344,7 @@ transactionsAdminRouter.get(
 faucetAdminRouter.post(
     "/",
     auditMiddleware(AuditActions.AdminFaucetIssued),
+    requireStepUp("faucet"),
     (req, res, next) => {
     try {
         const body = (req.body || {}) as Record<string, unknown>;
@@ -397,6 +429,23 @@ transactionsAdminRouter.post("/disputes/:id/decide", (req, res, next) => {
                 adminUserId: admin.id,
                 approve,
                 adminNote: typeof adminNote === "string" ? adminNote : undefined,
+            }
+        );
+        emitNotification(
+            {
+                repo: container.repos.notifications,
+                ids: container.ids,
+                clock: container.clock,
+            },
+            {
+                userId: d.userId,
+                kind: "dispute.decided",
+                title: approve ? "Dispute approved" : "Dispute rejected",
+                body: approve
+                    ? "Your dispute was approved. Funds may be reversed if applicable."
+                    : "Your dispute was reviewed and rejected.",
+                relatedEntityType: "dispute",
+                relatedEntityId: d.id,
             }
         );
         res.json({ dispute: serializeDispute(d) });
@@ -499,6 +548,7 @@ function serializeDispute(d: ReturnType<typeof container.repos.disputes.findById
     if (!d) return null;
     return {
         id: d.id,
+        userId: d.userId,
         transferId: d.transferId,
         reason: d.reason,
         status: d.status,

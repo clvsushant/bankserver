@@ -1,3 +1,9 @@
+import {
+    NomineeNameRequiredError,
+    NomineeRelationRequiredError,
+    NomineeShareInvalidError,
+} from "./errors";
+
 export interface Nominee {
     readonly id: string;
     readonly accountId: string;
@@ -19,10 +25,10 @@ export function createNominee(input: {
 }): Nominee {
     const fullName = input.fullName.trim();
     const relation = input.relation.trim();
-    if (!fullName) throw new Error("Nominee name required");
-    if (!relation) throw new Error("Relation required");
+    if (!fullName) throw new NomineeNameRequiredError();
+    if (!relation) throw new NomineeRelationRequiredError();
     const share = input.sharePercent ?? 100;
-    if (share < 1 || share > 100) throw new Error("Share percent must be 1-100");
+    if (share < 1 || share > 100) throw new NomineeShareInvalidError();
     return {
         id: input.id,
         accountId: input.accountId,

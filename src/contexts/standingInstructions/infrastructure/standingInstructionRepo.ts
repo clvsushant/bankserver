@@ -22,6 +22,8 @@ function toDomain(row: typeof standingInstructions.$inferSelect): StandingInstru
         lastRunAt: row.lastRunAt ?? undefined,
         status: row.status as SiStatus,
         description: row.description ?? undefined,
+        endAt: row.endAt ?? undefined,
+        failureCount: row.failureCount ?? 0,
         createdAt: row.createdAt,
     };
 }
@@ -74,6 +76,8 @@ export function makeStandingInstructionRepo(db: Db): StandingInstructionRepo {
                     lastRunAt: si.lastRunAt ?? null,
                     status: si.status,
                     description: si.description ?? null,
+                    endAt: si.endAt ?? null,
+                    failureCount: si.failureCount,
                     createdAt: si.createdAt,
                 })
                 .run();
@@ -84,6 +88,7 @@ export function makeStandingInstructionRepo(db: Db): StandingInstructionRepo {
                     nextRunAt: si.nextRunAt,
                     lastRunAt: si.lastRunAt ?? null,
                     status: si.status,
+                    failureCount: si.failureCount,
                 })
                 .where(eq(standingInstructions.id, si.id))
                 .run();

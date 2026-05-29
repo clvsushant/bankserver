@@ -65,3 +65,39 @@ export class CurrencyMismatchError extends Error {
         super("Currency mismatch");
     }
 }
+
+export class FdMinimumPrincipalError extends Error {
+    constructor() {
+        super("FD minimum principal not met");
+    }
+}
+
+export class FdInvalidTenureError extends Error {
+    constructor() {
+        super("Invalid FD tenure");
+    }
+}
+
+export class FdUnsupportedTenureError extends Error {
+    constructor() {
+        super("Unsupported FD tenure");
+    }
+}
+
+export class NomineeNameRequiredError extends Error {
+    constructor() {
+        super("Nominee name required");
+    }
+}
+
+export class NomineeRelationRequiredError extends Error {
+    constructor() {
+        super("Relation required");
+    }
+}
+
+export class NomineeShareInvalidError extends Error {
+    constructor() {
+        super("Share percent must be 1-100");
+    }
+}

@@ -5,7 +5,11 @@ import type { EventBus } from "../../../shared/eventBus";
 import { advanceRun } from "../domain/standingInstruction";
 import type { StandingInstructionRepo } from "./ports";
 import type { BeneficiaryRepo } from "../../beneficiaries/application/ports";
+import type { NotificationRepo } from "../../notifications/application/ports";
 import { executeTransfer } from "../../payments/application/executeTransfer";
+import { emitNotification } from "../../notifications/application/createNotification";
+
+const MAX_SI_FAILURES = 3;
 
 export interface RunResult {
     totalDue: number;
@@ -33,6 +37,7 @@ export function runDueInstructions(
         bus: EventBus;
         siRepo: StandingInstructionRepo;
         beneficiaries: BeneficiaryRepo;
+        notifications?: NotificationRepo;
     }
 ): RunResult {
     const now = deps.clock.now();
@@ -41,6 +46,10 @@ export function runDueInstructions(
     const result: RunResult = { totalDue: due.length, succeeded: 0, failed: 0, failures: [] };
 
     for (const si of due) {
+        if (si.endAt && si.endAt.getTime() <= now.getTime()) {
+            deps.siRepo.update({ ...si, status: "cancelled" });
+            continue;
+        }
         const beneficiary = deps.beneficiaries.findById(si.beneficiaryId);
         if (!beneficiary) {
             result.failed += 1;
@@ -70,6 +79,7 @@ export function runDueInstructions(
                 nextRunAt: nextRun,
                 lastRunAt: now,
                 status: "active",
+                failureCount: 0,
             });
             // Publish a custom event so the notifications subscriber can fire.
             deps.bus.publish([
@@ -84,11 +94,38 @@ export function runDueInstructions(
             ]);
             result.succeeded += 1;
         } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
             result.failed += 1;
             result.failures.push({
                 siId: si.id,
-                error: e instanceof Error ? e.message : String(e),
+                error: message,
             });
+            const failures = (si.failureCount ?? 0) + 1;
+            const paused = failures >= MAX_SI_FAILURES;
+            deps.siRepo.update({
+                ...si,
+                failureCount: failures,
+                status: paused ? "paused" : si.status,
+            });
+            if (deps.notifications) {
+                emitNotification(
+                    {
+                        repo: deps.notifications,
+                        ids: deps.ids,
+                        clock: deps.clock,
+                    },
+                    {
+                        userId: si.ownerUserId,
+                        kind: "standing.failed",
+                        title: paused ? "Standing instruction paused" : "Standing transfer failed",
+                        body: paused
+                            ? `Recurring transfer paused after ${failures} failures: ${message}`
+                            : `Recurring transfer failed: ${message}`,
+                        relatedEntityType: "standing_instruction",
+                        relatedEntityId: si.id,
+                    }
+                );
+            }
         }
     }
 

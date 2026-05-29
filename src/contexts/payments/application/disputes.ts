@@ -8,17 +8,49 @@ import { makeLedgerRepo } from "../infrastructure/ledgerRepo";
 import { makeUserRepo } from "../../identity/infrastructure/userRepo";
 import { credit, debit } from "../../accounts/domain/account";
 import { createDispute, type Dispute } from "../domain/dispute";
+import type { AccountRepo } from "../../accounts/application/ports";
 import type { DisputeRepo, TransferRepo } from "./ports";
 import type { Transfer } from "../domain/transfer";
 import { generateUtr } from "../domain/transfer";
 import type { MoneyMovedEvent } from "../domain/events";
+import {
+    DisputeAlreadyDecidedError,
+    DisputeNotAuthorizedError,
+    DisputeNotFoundError,
+    DisputeReversalBlockedError,
+    DisputeTransferNotFoundError,
+} from "../domain/disputeErrors";
+
+function assertUserOwnsTransfer(
+    accounts: AccountRepo,
+    userId: string,
+    transfer: Transfer
+): void {
+    let authorized = false;
+    if (transfer.fromAccountId) {
+        const from = accounts.findById(transfer.fromAccountId);
+        if (from?.userId === userId) authorized = true;
+    }
+    if (transfer.toAccountId) {
+        const to = accounts.findById(transfer.toAccountId);
+        if (to?.userId === userId) authorized = true;
+    }
+    if (!authorized) throw new DisputeNotAuthorizedError();
+}
 
 export function fileDispute(
-    deps: { disputes: DisputeRepo; transfers: TransferRepo; ids: IdGenerator; clock: Clock },
+    deps: {
+        disputes: DisputeRepo;
+        transfers: TransferRepo;
+        accounts: AccountRepo;
+        ids: IdGenerator;
+        clock: Clock;
+    },
     input: { userId: string; transferId: string; reason: string }
 ): Dispute {
     const transfer = deps.transfers.findById(input.transferId);
-    if (!transfer) throw new Error("Transfer not found");
+    if (!transfer) throw new DisputeTransferNotFoundError();
+    assertUserOwnsTransfer(deps.accounts, input.userId, transfer);
     const dispute = createDispute({
         id: deps.ids.uuid(),
         userId: input.userId,
@@ -44,9 +76,9 @@ export function decideDispute(
     }
 ): Dispute {
     const d = deps.disputes.findById(input.disputeId);
-    if (!d) throw new Error("Dispute not found");
+    if (!d) throw new DisputeNotFoundError();
     if (d.status !== "submitted" && d.status !== "under_review")
-        throw new Error("Dispute already decided");
+        throw new DisputeAlreadyDecidedError();
 
     const now = deps.clock.now();
     if (!input.approve) {
@@ -73,11 +105,11 @@ export function decideDispute(
 
         const original = transferRepo.findById(d.transferId);
         if (!original?.fromAccountId || !original.toAccountId)
-            throw new Error("Cannot reverse transfer without both accounts");
+            throw new DisputeReversalBlockedError("Cannot reverse transfer without both accounts");
 
         const from = accountRepo.findById(original.toAccountId);
         const to = accountRepo.findById(original.fromAccountId);
-        if (!from || !to) throw new Error("Accounts missing for reversal");
+        if (!from || !to) throw new DisputeReversalBlockedError("Accounts missing for reversal");
 
         const debited = debit(from, original.amountMinor, original.currency, now);
         const credited = credit(to, original.amountMinor, original.currency, now);

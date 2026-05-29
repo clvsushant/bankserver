@@ -17,6 +17,12 @@ import {
     InsufficientAvailableFundsError,
     InsufficientFundsError,
     MinimumBalanceViolationError,
+    FdMinimumPrincipalError,
+    FdInvalidTenureError,
+    FdUnsupportedTenureError,
+    NomineeNameRequiredError,
+    NomineeRelationRequiredError,
+    NomineeShareInvalidError,
 } from "../contexts/accounts/domain/errors";
 import {
     BeneficiaryAlreadyExistsError,
@@ -47,7 +53,15 @@ import {
     TransferAmountInvalidError,
     TransferOverLimitError,
     TransferToSelfError,
+    InvalidUpiVpaError,
 } from "../contexts/payments/domain/errors";
+import {
+    DisputeAlreadyDecidedError,
+    DisputeNotAuthorizedError,
+    DisputeNotFoundError,
+    DisputeReversalBlockedError,
+    DisputeTransferNotFoundError,
+} from "../contexts/payments/domain/disputeErrors";
 import {
     StandingInstructionInvalidStateError,
     StandingInstructionNotFoundError,
@@ -69,6 +83,12 @@ export function translateAccountDomainError(err: unknown): HttpError | null {
     if (err instanceof MinimumBalanceViolationError) return new ConflictError(err.message);
     if (err instanceof FixedDepositWithdrawalBlockedError) return new ConflictError(err.message);
     if (err instanceof HoldExceedsBalanceError) return new ConflictError(err.message);
+    if (err instanceof FdMinimumPrincipalError) return new BadRequestError(err.message);
+    if (err instanceof FdInvalidTenureError) return new BadRequestError(err.message);
+    if (err instanceof FdUnsupportedTenureError) return new BadRequestError(err.message);
+    if (err instanceof NomineeNameRequiredError) return new BadRequestError(err.message);
+    if (err instanceof NomineeRelationRequiredError) return new BadRequestError(err.message);
+    if (err instanceof NomineeShareInvalidError) return new BadRequestError(err.message);
     return null;
 }
 
@@ -79,6 +99,7 @@ export function translateTransferDomainError(err: unknown): HttpError | null {
     if (err instanceof TransferToSelfError) return new BadRequestError(err.message);
     if (err instanceof CrossUserFixedDepositTransferError)
         return new ConflictError(err.message);
+    if (err instanceof InvalidUpiVpaError) return new BadRequestError(err.message);
     return null;
 }
 
@@ -126,7 +147,22 @@ export function translateStandingInstructionDomainError(err: unknown): HttpError
 }
 
 /** Plain Error messages from disputes application (not yet typed domain errors). */
+export function translateDisputeDomainError(err: unknown): HttpError | null {
+    if (err instanceof DisputeTransferNotFoundError || err instanceof DisputeNotFoundError)
+        return new NotFoundError(err.message);
+    if (err instanceof DisputeNotAuthorizedError) return new ForbiddenError(err.message);
+    if (
+        err instanceof DisputeAlreadyDecidedError ||
+        err instanceof DisputeReversalBlockedError
+    )
+        return new ConflictError(err.message);
+    return null;
+}
+
+/** @deprecated use translateDisputeDomainError */
 export function translateDisputePlainError(err: unknown): HttpError | null {
+    const mapped = translateDisputeDomainError(err);
+    if (mapped) return mapped;
     if (!(err instanceof Error)) return null;
     switch (err.message) {
         case "Transfer not found":

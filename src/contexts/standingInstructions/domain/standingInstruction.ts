@@ -15,6 +15,8 @@ export interface StandingInstruction {
     lastRunAt?: Date;
     status: SiStatus;
     readonly description?: string;
+    endAt?: Date;
+    failureCount: number;
     readonly createdAt: Date;
 }
 
@@ -28,6 +30,7 @@ export function createInstruction(input: {
     frequency: SiFrequency;
     description?: string;
     startAt: Date;
+    endAt?: Date;
     createdAt: Date;
 }): StandingInstruction {
     if (input.amountMinor <= 0 || !Number.isInteger(input.amountMinor)) {
@@ -44,6 +47,8 @@ export function createInstruction(input: {
         nextRunAt: input.startAt,
         status: "active",
         description: input.description,
+        endAt: input.endAt,
+        failureCount: 0,
         createdAt: input.createdAt,
     };
 }

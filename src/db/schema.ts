@@ -288,6 +288,30 @@ export const billers = sqliteTable(
     })
 );
 
+export const savedBillAccounts = sqliteTable(
+    "saved_bill_accounts",
+    {
+        id: text("id").primaryKey(),
+        userId: text("user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        billerId: text("biller_id")
+            .notNull()
+            .references(() => billers.id, { onDelete: "cascade" }),
+        customerRef: text("customer_ref").notNull(),
+        nickname: text("nickname").notNull(),
+        createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    },
+    (t) => ({
+        byUser: index("saved_bill_accounts_by_user").on(t.userId),
+        userBillerRefUq: uniqueIndex("saved_bill_accounts_user_biller_ref_uq").on(
+            t.userId,
+            t.billerId,
+            t.customerRef
+        ),
+    })
+);
+
 // ---------- Standing Instructions (Phase 4 #5) ----------
 
 export const standingInstructions = sqliteTable(
@@ -312,6 +336,8 @@ export const standingInstructions = sqliteTable(
             .notNull()
             .default("active"),
         description: text("description"),
+        endAt: integer("end_at", { mode: "timestamp_ms" }),
+        failureCount: integer("failure_count", { mode: "number" }).notNull().default(0),
         createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     },
     (t) => ({

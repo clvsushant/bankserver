@@ -9,7 +9,7 @@ import { makeLedgerRepo } from "../infrastructure/ledgerRepo";
 import { makeUserRepo } from "../../identity/infrastructure/userRepo";
 import { credit, debit, placeHold } from "../../accounts/domain/account";
 import { AccountNotFoundError } from "../../accounts/domain/errors";
-import { TransferAmountInvalidError, TransferAggregateLimitError } from "../domain/errors";
+import { TransferAmountInvalidError, TransferAggregateLimitError, InvalidUpiVpaError } from "../domain/errors";
 import type { Transfer, TransferRail } from "../domain/transfer";
 import { generateUtr } from "../domain/transfer";
 import type { MoneyMovedEvent } from "../domain/events";
@@ -30,6 +30,8 @@ export interface ExecuteRailTransferInput {
     kycTier: KycTier;
     /** UPI stub — validated VPA format only in demo. */
     vpa?: string;
+    /** External rail metadata (IFSC for NEFT/RTGS/IMPS manual entry). */
+    ifsc?: string;
 }
 
 export function executeRailTransfer(
@@ -53,7 +55,7 @@ export function executeRailTransfer(
     if (input.rail === "upi") {
         const vpa = input.vpa?.trim();
         if (!vpa || !/^[\w.-]+@[\w.-]+$/.test(vpa))
-            throw new Error("Invalid UPI VPA");
+            throw new InvalidUpiVpaError();
     }
 
     // IMPS and internal-style instant settlement.
@@ -149,7 +151,9 @@ function createPendingRailTransfer(
             toAccountNumber: to.accountNumber,
             fromUsername: fromUser?.username,
             toUsername: toUser?.username,
-            description: `${input.rail.toUpperCase()} transfer pending settlement`,
+            description: `${input.rail.toUpperCase()} transfer pending settlement${
+                input.ifsc ? ` (IFSC ${input.ifsc})` : ""
+            }`,
         };
 
         transferRepo.insert(newTransfer);

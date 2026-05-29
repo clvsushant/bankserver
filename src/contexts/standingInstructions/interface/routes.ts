@@ -49,6 +49,7 @@ standingInstructionsRouter.post(
         const amountMinor = body.amountMinor;
         const frequency = body.frequency;
         const description = body.description;
+        const endDate = body.endDate;
 
         if (!isUuid(fromAccountId))
             return next(new BadRequestError("Invalid fromAccountId"));
@@ -68,6 +69,13 @@ standingInstructionsRouter.post(
             (typeof description !== "string" || description.length > 256)
         )
             return next(new BadRequestError("Invalid description"));
+        let endAt: Date | undefined;
+        if (endDate !== undefined && endDate !== null) {
+            if (typeof endDate !== "string") return next(new BadRequestError("Invalid endDate"));
+            const parsed = new Date(endDate);
+            if (Number.isNaN(parsed.getTime())) return next(new BadRequestError("Invalid endDate"));
+            endAt = parsed;
+        }
 
         const si = createStandingInstruction(
             {
@@ -87,6 +95,7 @@ standingInstructionsRouter.post(
                 currency: "INR",
                 frequency: frequency as "daily" | "weekly" | "monthly",
                 description: typeof description === "string" ? description : undefined,
+                endAt,
             }
         );
         res.status(201).json({ instruction: serialize(si) });
@@ -189,6 +198,8 @@ function serialize(si: ReturnType<typeof container.repos.standingInstructions.fi
         lastRunAt: si.lastRunAt?.toISOString(),
         status: si.status,
         description: si.description,
+        endAt: si.endAt?.toISOString(),
+        failureCount: si.failureCount,
         createdAt: si.createdAt.toISOString(),
     };
 }

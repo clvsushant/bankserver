@@ -24,6 +24,11 @@ import {
     type Account,
     type AccountType,
 } from "../domain/account";
+import {
+    FD_MAX_TENURE_MONTHS,
+    FD_MIN_PRINCIPAL_MINOR,
+    FD_MIN_TENURE_MONTHS,
+} from "../domain/fixedDeposit";
 
 export const accountsCustomerRouter = express.Router();
 export const accountsAdminRouter = express.Router();
@@ -157,12 +162,15 @@ accountsCustomerRouter.post(
                 principalMinor <= 0
             )
                 return next(new BadRequestError("Invalid principalMinor"));
+            if (principalMinor < FD_MIN_PRINCIPAL_MINOR)
+                return next(new BadRequestError("FD minimum principal not met"));
             if (
                 typeof tenureMonths !== "number" ||
                 !Number.isInteger(tenureMonths) ||
-                tenureMonths <= 0
+                tenureMonths < FD_MIN_TENURE_MONTHS ||
+                tenureMonths > FD_MAX_TENURE_MONTHS
             )
-                return next(new BadRequestError("Invalid tenureMonths"));
+                return next(new BadRequestError("Invalid FD tenure"));
 
             const fd = openFixedDeposit(
                 {
@@ -270,6 +278,16 @@ accountsCustomerRouter.post("/:id/nominees", requireBankingAccess, (req, res, ne
             return next(new BadRequestError("Invalid fullName"));
         if (!isNonEmptyString(body.relation, 64))
             return next(new BadRequestError("Invalid relation"));
+        if (body.sharePercent !== undefined) {
+            const share = body.sharePercent;
+            if (
+                typeof share !== "number" ||
+                !Number.isInteger(share) ||
+                share < 1 ||
+                share > 100
+            )
+                return next(new BadRequestError("Invalid sharePercent"));
+        }
         const n = addNominee(
             {
                 accounts: container.repos.accounts,
@@ -291,6 +309,29 @@ accountsCustomerRouter.post("/:id/nominees", requireBankingAccess, (req, res, ne
         next(translate(err));
     }
 });
+
+accountsCustomerRouter.post(
+    "/:id/nominees/:nomineeId/remove",
+    requireBankingAccess,
+    (req, res, next) => {
+        try {
+            const user = req.user!;
+            const { id, nomineeId } = req.params;
+            if (!isUuid(id) || !isUuid(nomineeId))
+                return next(new BadRequestError("Invalid id"));
+            removeNominee(
+                {
+                    accounts: container.repos.accounts,
+                    nominees: container.repos.nominees,
+                },
+                { userId: user.id, nomineeId }
+            );
+            res.json({ ok: true });
+        } catch (err) {
+            next(translate(err));
+        }
+    }
+);
 
 accountsAdminRouter.post(
     "/:id/unfreeze",

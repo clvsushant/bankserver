@@ -32,6 +32,7 @@ if (process.env.NODE_ENV !== "test") {
                 bus: container.bus,
                 siRepo: container.repos.standingInstructions,
                 beneficiaries: container.repos.beneficiaries,
+                notifications: container.repos.notifications,
             });
             if (result.totalDue > 0) {
                 logger.info(

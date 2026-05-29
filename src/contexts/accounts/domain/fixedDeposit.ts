@@ -1,3 +1,9 @@
+import {
+    FdInvalidTenureError,
+    FdMinimumPrincipalError,
+    FdUnsupportedTenureError,
+} from "./errors";
+
 /** Demo FD rate card — annual rate in basis points by tenure bucket. */
 export const FD_RATE_BPS: ReadonlyArray<{ minMonths: number; maxMonths: number; rateBps: number }> =
     [
@@ -33,7 +39,7 @@ export interface FixedDeposit {
 
 export function rateBpsForTenure(months: number): number {
     const tier = FD_RATE_BPS.find((t) => months >= t.minMonths && months <= t.maxMonths);
-    if (!tier) throw new Error("Unsupported FD tenure");
+    if (!tier) throw new FdUnsupportedTenureError();
     return tier.rateBps;
 }
 
@@ -65,12 +71,12 @@ export function openFixedDeposit(input: {
     autoRenew: boolean;
     openedAt: Date;
 }): FixedDeposit {
-    if (input.principalMinor < FD_MIN_PRINCIPAL_MINOR) throw new Error("FD minimum principal not met");
+    if (input.principalMinor < FD_MIN_PRINCIPAL_MINOR) throw new FdMinimumPrincipalError();
     if (
         input.tenureMonths < FD_MIN_TENURE_MONTHS ||
         input.tenureMonths > FD_MAX_TENURE_MONTHS
     )
-        throw new Error("Invalid FD tenure");
+        throw new FdInvalidTenureError();
     const maturityAt = new Date(input.openedAt);
     maturityAt.setMonth(maturityAt.getMonth() + input.tenureMonths);
     return {

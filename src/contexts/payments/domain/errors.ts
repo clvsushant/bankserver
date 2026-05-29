@@ -35,3 +35,9 @@ export class TransferAggregateLimitError extends Error {
         super(message);
     }
 }
+
+export class InvalidUpiVpaError extends Error {
+    constructor() {
+        super("Invalid UPI VPA");
+    }
+}
